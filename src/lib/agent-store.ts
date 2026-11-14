@@ -61,7 +61,7 @@ export type Source = { title: string; url: string };
 export type ToolCall = {
   id: string;
   name: string;
-  /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
+  /** "read" for a page read (web_read; tavily_extract on older chats), "crossref" for a cross_reference,
    *  "vault" for a vault search/read/write, "visualize" for a figure job, "visualize-message"
    *  for a message to the agent building one, "subagents" for a deploy_subagents group,
    *  "world" for the chat's World Labs world; absent for a search, and on chats saved
@@ -76,6 +76,8 @@ export type ToolCall = {
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
+  /** a Telem search or read: the providers that answered, for the row's hover title */
+  providers?: string[];
   /** a cross_reference's claims and source↔source relations */
   crossref?: Crossref;
   /** a "subagents" group: each subagent's state, as the route last reported it */
@@ -504,7 +506,7 @@ type ToolEvent =
       parentId?: string;
       agentId?: string;
     }
-  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref; subagents?: unknown }
+  | { id: string; status: "done"; sources?: Source[]; providers?: unknown; crossref?: Crossref; subagents?: unknown }
   | { id: string; status: "error" };
 
 /**
@@ -545,6 +547,9 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
             ...call,
             status: "done",
             sources: event.sources ?? [],
+            ...(Array.isArray(event.providers) && event.providers.length
+              ? { providers: event.providers.filter((p): p is string => typeof p === "string").slice(0, 12) }
+              : {}),
             ...(event.crossref ? { crossref: event.crossref } : {}),
             ...(subagents ? { subagents } : {}),
           }

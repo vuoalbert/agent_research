@@ -69,7 +69,7 @@ const visualizeFrames = (frames: { event?: string; data: { name?: string } }[]) 
 describe("POST /api/chat — every research turn ends with one figure", () => {
   it("starts one itself, before `done`, after a research turn Claude did not visualize", async () => {
     query.mockImplementation(async function* () {
-      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__tavily_search", input: { query: "EV share Norway" } });
+      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__web_search", input: { query: "EV share Norway" } });
       yield delta("88.9% of new cars were electric in 2024.");
       yield assistant({ type: "text", text: "88.9% of new cars were electric in 2024." });
       yield success;
@@ -92,7 +92,7 @@ describe("POST /api/chat — every research turn ends with one figure", () => {
 
   it("adds nothing when Claude called visualize itself", async () => {
     query.mockImplementation(async function* (args: { options: { mcpServers: Record<string, { tools: { handler: Handler }[] }> } }) {
-      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__tavily_extract", input: {} });
+      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__web_read", input: {} });
       await args.options.mcpServers.visualize.tools[0].handler({ subject: "EV share as a tally counter", explicit: false });
       yield success;
     });
@@ -115,7 +115,7 @@ describe("POST /api/chat — every research turn ends with one figure", () => {
 
   it("starts nothing for a research turn that did not finish", async () => {
     query.mockImplementation(async function* () {
-      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__tavily_search", input: {} });
+      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__web_search", input: {} });
       yield { type: "result", subtype: "error_max_turns", num_turns: 16 };
     });
     await post("What share of new cars in Norway are electric?");
@@ -155,7 +155,7 @@ describe("POST /api/chat — talking to the Visualize agent", () => {
     let reply = "";
     query.mockImplementation(async function* (args: Args) {
       // research in the same turn would otherwise end with a figure of its own
-      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__tavily_search", input: { query: "bell" } });
+      yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__web_search", input: { query: "bell" } });
       reply = (await handler(args, "message_visualize")({ message: "Make the bell dome blue and label the striker." })).content[0].text;
       yield success;
     });

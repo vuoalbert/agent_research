@@ -38,7 +38,7 @@
  *   Reduced motion never glides.
  */
 
-import { BookOpen, Scale, Wrench } from "lucide-react";
+import { BookOpen, Radar, Scale, Wrench } from "lucide-react";
 import {
   AnimatePresence,
   animate,
@@ -220,11 +220,14 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
     : call.action === "read"
       ? `Reading ${call.query}`
       : call.query;
+  // a Telem search or read; rows saved before Telem keep their own name ("Tavily") and icon
+  const telem = call.name === "Telem";
   return (
     <div
       data-ai="tool"
       data-action={call.action ?? "search"}
       data-status={call.status}
+      title={telem && call.providers?.length ? `Telem · ${call.providers.join(", ")}` : undefined}
       className={cn(
         "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",
         call.status === "running" && "motion-safe:animate-pulse",
@@ -233,6 +236,9 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
       {/* a cross-reference weighs the sources against each other */}
       {call.action === "crossref" || call.name === "Cross-reference" ? (
         <Scale aria-hidden data-icon="scale" size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      ) : telem ? (
+        /* Telem routes the call across search / fetch providers */
+        <Radar aria-hidden data-icon="radar" size={14} className="shrink-0 text-[var(--ai-muted)]" />
       ) : vault ? (
         /* notes kept from earlier research */
         <BookOpen aria-hidden data-icon="book-open" size={14} className="shrink-0 text-[var(--ai-muted)]" />
@@ -240,6 +246,7 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
         <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
       )}
       <span className="shrink-0 font-medium text-[var(--ai-ink)]">{call.name}</span>
+      {telem && call.action === "read" && <span className="shrink-0 text-[var(--ai-muted)]">·</span>}
       <span className="min-w-0 truncate text-[var(--ai-muted)]">{detail}</span>
       {call.status === "error" && (
         <span className="shrink-0 text-[var(--ai-muted)]">· failed</span>

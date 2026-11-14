@@ -39,7 +39,7 @@ afterEach(() => {
 const assistant = (...content: unknown[]) => ({ type: "assistant", message: { content } });
 const success = { type: "result", subtype: "success", num_turns: 3, result: "" };
 const research = async function* () {
-  yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__tavily_search", input: { query: "EV share Norway" } });
+  yield assistant({ type: "tool_use", id: "t1", name: "mcp__research__web_search", input: { query: "EV share Norway" } });
   yield { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "88.9%." } } };
   yield success;
 };

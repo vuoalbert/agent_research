@@ -146,11 +146,13 @@ export type TelemEmphasis = keyof typeof EMPHASES;
 
 let client: Telem | null = null;
 let clientKey: string | undefined;
+let override: Telem | null = null;
 
 /** the shared SDK client, or null when TELEM_API_KEY is unset */
 export function getTelem(): Telem | null {
   const apiKey = process.env.TELEM_API_KEY;
   if (!apiKey) return null;
+  if (override) return override;
   if (!client || clientKey !== apiKey) {
     client = new Telem({ apiKey, maxRetries: 1, userAgent: `${TELEM_HARNESS}/1` });
     clientKey = apiKey;
@@ -158,10 +160,9 @@ export function getTelem(): Telem | null {
   return client;
 }
 
-/** test-only: swap the SDK client (null restores the env-built one) */
+/** test-only: stand in for the SDK client while TELEM_API_KEY is set (null restores the real one) */
 export function __setTelemForTests(fake: Pick<Telem, "search" | "fetch"> | null) {
-  client = fake as Telem | null;
-  clientKey = fake ? process.env.TELEM_API_KEY : undefined;
+  override = fake as Telem | null;
 }
 
 /* ------------------------------------------------------------------ lineage */

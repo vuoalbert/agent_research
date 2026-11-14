@@ -2,15 +2,16 @@ import { query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
 import { shapeAt, type Subagent } from "@/lib/subagents";
+import { EMPHASES, childLineage, createLineage, type TelemEmphasis, type TelemLineage } from "@/server/telem/client";
 
 import {
-  EXTRACT_TOOL_ID,
-  TAVILY_SERVER,
-  TAVILY_TOOL_ID,
-  createTavilyServer,
+  RESEARCH_SERVER,
+  WEB_READ_TOOL_ID,
+  WEB_SEARCH_TOOL_ID,
+  createWebServer,
   type PageSeen,
   type ToolActivity,
-} from "./tavily";
+} from "./web-tools";
 import { VAULT_READ_TOOL, VAULT_SEARCH_TOOL, createVaultTools, type VaultActivity } from "./vault-tools";
 
 /**
@@ -25,6 +26,13 @@ import { VAULT_READ_TOOL, VAULT_SEARCH_TOOL, createVaultTools, type VaultActivit
  * URLs, disagreements); the tool hands every result back to the chat Claude,
  * which compares them.
  *
+ * Telem: each subagent is a child trajectory of the chat turn that deployed it
+ * (`childLineage`), so Telem's console draws them side by side under that
+ * turn. And each searches a different family of providers by default — deep
+ * (exa, parallel, seltz), news (perplexity, linkup, tavily), broad web (brave,
+ * you, ceramic), in turn, or "social" (X, YouTube, Substack) when the lead asks
+ * for it — so their sources overlap less.
+ *
  * What the reader sees:
  *   - one `tool` row, `{ id, name: "Subagents", action: "subagents", query,
  *     status, subagents }`, re-sent (same id, `running`) each time a subagent
@@ -38,7 +46,7 @@ import { VAULT_READ_TOOL, VAULT_SEARCH_TOOL, createVaultTools, type VaultActivit
 
 export const SUBAGENTS_TOOL = "deploy_subagents";
 /** the name Claude Code knows the tool by, for `allowedTools` */
-export const SUBAGENTS_TOOL_ID = `mcp__${TAVILY_SERVER}__${SUBAGENTS_TOOL}`;
+export const SUBAGENTS_TOOL_ID = `mcp__${RESEARCH_SERVER}__${SUBAGENTS_TOOL}`;
 export const SUBAGENT_MODEL = "claude-opus-5-5";
 export const SUBAGENT_EFFORT = "medium" as const;
 export const MIN_SUBAGENTS = 2;
@@ -49,17 +57,26 @@ export const SUBAGENT_MAX_TURNS = 8;
 export const SUBAGENT_TIMEOUT_MS = 3 * 60_000;
 /** the tools a subagent may call — and nothing else */
 export const SUBAGENT_TOOL_IDS = [
-  TAVILY_TOOL_ID,
-  EXTRACT_TOOL_ID,
-  `mcp__${TAVILY_SERVER}__${VAULT_SEARCH_TOOL}`,
-  `mcp__${TAVILY_SERVER}__${VAULT_READ_TOOL}`,
+  WEB_SEARCH_TOOL_ID,
+  WEB_READ_TOOL_ID,
+  `mcp__${RESEARCH_SERVER}__${VAULT_SEARCH_TOOL}`,
+  `mcp__${RESEARCH_SERVER}__${VAULT_READ_TOOL}`,
 ];
+/** the provider families subagents take in turn when the lead names none */
+export const EMPHASIS_ROTATION: readonly TelemEmphasis[] = ["deep", "news", "web"];
+const FOCI = Object.keys(EMPHASES) as [TelemEmphasis, ...TelemEmphasis[]];
+
+/** a subagent's provider family: the one the lead named, else the next in the rotation */
+export function emphasisFor(index: number, focus?: TelemEmphasis): TelemEmphasis {
+  return focus ?? EMPHASIS_ROTATION[index % EMPHASIS_ROTATION.length];
+}
 const LINE_CHARS = 140;
 
 export const SUBAGENT_PROMPT = [
   "You are a research subagent for Agent Research. A lead researcher split a question into angles and gave you ONE. Research only your angle; the others are covered.",
-  "Tools: tavily_search (web search), tavily_extract (read 1-5 pages in full), vault_search and vault_read (notes from earlier research, read-only).",
-  "Work quickly: 1-3 focused searches, then read the 2-3 most relevant pages, preferably primary or official sources, with tavily_extract. Don't repeat a search.",
+  "Tools: web_search (Telem web search; optional platform for X, YouTube, LinkedIn, maps, reviews, pubmed, sec, patents …), web_read (read 1-5 pages in full), vault_search and vault_read (notes from earlier research, read-only).",
+  "Your searches draw on a provider family the other subagents don't use, so you will see different sources — use them.",
+  "Work quickly: 1-3 focused searches, then read the 2-3 most relevant pages, preferably primary or official sources, with web_read. Don't repeat a search.",
   "Report only what the pages you saw say, each fact with its source URL. Note where sources disagree (different numbers, dates or claims for the same thing).",
   "End with exactly this and nothing before it:",
   "Headline: <one sentence, at most 120 characters: the key finding, with its main number or date>",
@@ -71,7 +88,7 @@ export const SUBAGENT_PROMPT = [
   "- <source A says X, source B says Y> (or: - none found)",
 ].join("\n");
 
-export type SubagentTask = { title: string; task: string };
+export type SubagentTask = { title: string; task: string; focus?: TelemEmphasis };
 
 export type SubagentsActivity =
   | {
@@ -103,11 +120,15 @@ export function validateSubagents(value: unknown): { ok: true; subagents: Subage
   }
   const subagents: SubagentTask[] = [];
   for (const entry of value) {
-    const { title, task } = (entry ?? {}) as Record<string, unknown>;
+    const { title, task, focus } = (entry ?? {}) as Record<string, unknown>;
     if (typeof title !== "string" || !title.trim() || typeof task !== "string" || !task.trim()) {
       return { ok: false, message: "Each subagent needs a non-empty title and task." };
     }
-    subagents.push({ title: clip(flat(title), 80), task: task.trim() });
+    subagents.push({
+      title: clip(flat(title), 80),
+      task: task.trim(),
+      ...(typeof focus === "string" && (FOCI as string[]).includes(focus) ? { focus: focus as TelemEmphasis } : {}),
+    });
   }
   return { ok: true, subagents };
 }
@@ -178,6 +199,7 @@ export function createSubagentsTool({
   timeoutMs = SUBAGENT_TIMEOUT_MS,
   concurrency = SUBAGENT_CONCURRENCY,
   vaultDir,
+  lineage,
 }: {
   onActivity: (activity: SubagentsActivity) => void;
   /** every page a subagent's search or read returned, like the chat's own */
@@ -189,20 +211,29 @@ export function createSubagentsTool({
   timeoutMs?: number;
   concurrency?: number;
   vaultDir?: string;
+  /** the chat turn's Telem lineage: each subagent becomes a child trajectory of it */
+  lineage?: TelemLineage;
 }) {
+  const parentLineage = lineage ?? createLineage({ question });
   let deployed = false;
 
   return tool(
     SUBAGENTS_TOOL,
     `Deploy ${MIN_SUBAGENTS}-${MAX_SUBAGENTS} research subagents (Opus) in parallel, one per angle of the question. ` +
       "Each searches the web, reads the best pages and returns a headline, a short summary, key claims with source " +
-      "URLs and the disagreements it found. Give each a short title (2-5 words) and a self-contained task. Once per turn.",
+      "URLs and the disagreements it found. Give each a short title (2-5 words) and a self-contained task. Once per turn. " +
+      "Each searches a different family of providers in turn (deep, news, web); set focus to override, and use " +
+      '"social" (X, YouTube, Substack) only when what people post matters.',
     {
       subagents: z
         .array(
           z.object({
             title: z.string().min(1).max(80).describe("A short name for the angle, 2-5 words"),
             task: z.string().min(1).max(2000).describe("What this subagent should find out, self-contained"),
+            focus: z
+              .enum(FOCI)
+              .optional()
+              .describe("Provider family: deep (papers, primary docs), news, web (broad), social (X, YouTube, Substack)"),
           }),
         )
         .min(MIN_SUBAGENTS)
@@ -255,8 +286,14 @@ export function createSubagentsTool({
             report("running");
           }
         };
-        const server = createTavilyServer(forward, {
+        const server = createWebServer(forward, {
           onPages,
+          // lineage is bookkeeping: a snapshot that fails to build never stops the research
+          lineage: await childLineage(parentLineage, { agentId: row.id, title: sub.title, task: sub.task }).catch(
+            () => createLineage({ chatId: parentLineage.chatId, question: sub.task }),
+          ),
+          emphasis: emphasisFor(index, sub.focus),
+          signal: controller.signal,
           tools: createVaultTools({ onActivity: forward, dir: vaultDir }).filter(
             (definition) => definition.name === VAULT_SEARCH_TOOL || definition.name === VAULT_READ_TOOL,
           ),
@@ -278,7 +315,7 @@ export function createSubagentsTool({
               // no built-ins, no repo settings, only the scoped server's tools
               tools: [],
               settingSources: [],
-              mcpServers: { [TAVILY_SERVER]: server },
+              mcpServers: { [RESEARCH_SERVER]: server },
               allowedTools: SUBAGENT_TOOL_IDS,
               permissionMode: "dontAsk",
               maxTurns: SUBAGENT_MAX_TURNS,

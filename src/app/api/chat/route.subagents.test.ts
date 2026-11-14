@@ -5,8 +5,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installTelemFakeFrom } from "@/test/telem-fake";
+
 /**
- * deploy_subagents through POST /api/chat, the Agent SDK and Tavily mocked:
+ * deploy_subagents through POST /api/chat, the Agent SDK mocked and Telem faked:
  * a turn whose only research is its subagents' still counts as research —
  * their sources stream as tagged rows, cross_reference checks them, the vault
  * records them, and the turn gets its figure.
@@ -38,7 +40,8 @@ let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "route-subagents-"));
   vi.stubEnv("VAULT_DIR", dir);
-  vi.stubEnv("TAVILY_API_KEY", "test-key");
+  vi.stubEnv("TAVILY_API_KEY", "");
+  installTelemFakeFrom({ search, extract });
   query.mockReset();
   search.mockReset();
   extract.mockReset();

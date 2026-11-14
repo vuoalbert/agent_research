@@ -5,20 +5,20 @@ import { FOLDERS, VaultPathError } from "@/server/vault/files";
 import { noteName, readNote, searchVault } from "@/server/vault/search";
 import { writeSavedNote } from "@/server/vault/write";
 
-import { TAVILY_SERVER, type Source } from "./tavily";
+import { RESEARCH_SERVER, type Source } from "./web-tools";
 
 /**
- * The research vault as Claude tools, on the same `research` server as Tavily:
+ * The research vault as Claude tools, on the same `research` server as web search:
  * `vault_search` finds notes earlier research left, `vault_read` opens one,
  * `vault_write` saves one when the user asks. Each reports a `Vault` row to
- * the chat the way the Tavily tools report theirs.
+ * the chat the way the web tools report theirs.
  */
 
 export const VAULT_SEARCH_TOOL = "vault_search";
 export const VAULT_READ_TOOL = "vault_read";
 export const VAULT_WRITE_TOOL = "vault_write";
 export const VAULT_TOOL_IDS = [VAULT_SEARCH_TOOL, VAULT_READ_TOOL, VAULT_WRITE_TOOL].map(
-  (name) => `mcp__${TAVILY_SERVER}__${name}`,
+  (name) => `mcp__${RESEARCH_SERVER}__${name}`,
 );
 
 export type VaultOp = "search" | "read" | "write";
