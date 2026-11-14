@@ -6,6 +6,7 @@ import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cr
 import { parseSources } from "./sources";
 import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type Source } from "./tavily";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
+import { VISUALIZE_PROMPT, VISUALIZE_SERVER, VISUALIZE_TOOL_ID, createVisualizeTurn } from "./visualize-tool";
 
 const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
 
@@ -30,6 +31,9 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *                            data: {"id","name":"Cross-reference","action":"crossref","query","status":"running"}
  *                              → {"id","status":"done","crossref":{"claims","relations"}}
  *                            data: {"id","name":"Vault","action":"vault","op":"search"|"read"|"write","query","status":"running"}
+ *                            data: {"id","name":"Visualize","action":"visualize","query","jobId","status":"running"}
+ *                                  (then "done" once the job is queued; see visualize-tool.ts —
+ *                                  a research turn always ends with exactly one)
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -145,6 +149,12 @@ export async function POST(request: Request) {
       };
       // the sources cross_reference checks: the chat's, then this request's finds
       const log = createResearchLog(chatSources);
+      // every research turn ends with one figure (visualize-tool.ts)
+      const visualize = createVisualizeTurn({
+        onActivity: report,
+        researchTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID],
+        crossrefTool: CROSSREF_TOOL_ID,
+      });
       try {
         const run = query({
           prompt: buildPrompt(turns),
@@ -152,7 +162,7 @@ export async function POST(request: Request) {
             model: MODEL,
             effort: EFFORT,
             thinking: { type: "adaptive" },
-            systemPrompt: SYSTEM_PROMPT,
+            systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}`,
             // No built-in tools and no filesystem settings: `tools: []` turns the
             // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
             // and hooks out. The tools are Tavily search and read, pre-approved;
@@ -170,8 +180,9 @@ export async function POST(request: Request) {
                   ...createVaultTools({ onActivity: report }),
                 ],
               }),
+              [VISUALIZE_SERVER]: visualize.server,
             },
-            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, ...VAULT_TOOL_IDS],
+            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, ...VAULT_TOOL_IDS, VISUALIZE_TOOL_ID],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,
@@ -184,6 +195,7 @@ export async function POST(request: Request) {
         let breakBeforeNext = false;
         for await (const message of run) {
           if (abort.signal.aborted) break;
+          visualize.observe(message);
           // Text arrives as Messages API streaming events wrapped in the SDK's
           // `stream_event` frame — not as a top-level delta message.
           if (message.type === "stream_event") {
@@ -210,6 +222,8 @@ export async function POST(request: Request) {
           }
         }
 
+        // a research turn Claude did not visualize gets its figure queued here
+        if (!abort.signal.aborted) visualize.finish(turns[turns.length - 1].content);
         send(controller, "done", {});
         controller.close();
         // after the stream: the reader never waits on the vault, and a failed

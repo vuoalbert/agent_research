@@ -105,13 +105,20 @@ describe("full-width tab views", () => {
     expect(container.querySelector("[data-full-tab-view]")).toBeNull();
   });
 
-  it("gives Visualize a blank canvas: Back only, no graph", async () => {
-    renderShell();
-    fireEvent.click(tab("Visualize"));
-    const view = screen.getByRole("region", { name: "Visualize" });
-    await act(async () => {});
-    expect(graphs.mounted).toHaveLength(0);
-    expect(view.querySelectorAll("*")).toHaveLength(view.querySelectorAll("button, button *").length);
+  it("gives Visualize its figure page, no graph: the empty state before the first figure", async () => {
+    const fetch = vi.fn(async () => Response.json({ job: null }));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      renderShell();
+      fireEvent.click(tab("Visualize"));
+      const view = screen.getByRole("region", { name: "Visualize" });
+      await waitFor(() => expect(view.querySelector('[data-visualize="empty"]')).not.toBeNull());
+      expect(view.textContent).toContain("Ask Claude to visualize something");
+      expect(fetch).toHaveBeenCalledWith("/api/visualize/current?lines=50", expect.anything());
+      expect(graphs.mounted).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("mounts the 3D graph only in the Force graph view, and destroys it on close", async () => {

@@ -43,3 +43,6 @@ out/
 
 # research vault (private notes; the repo is public)
 /vault/
+
+# Visualize studio: the anatomy skill copy and job folders (npm run setup:visualize)
+/.visualize/

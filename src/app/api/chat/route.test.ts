@@ -102,7 +102,7 @@ describe("POST /api/chat", () => {
     // no built-ins; the one MCP tool pre-approved, everything else denied
     expect(options.tools).toEqual([]);
     expect(options.settingSources).toEqual([]);
-    expect(Object.keys(options.mcpServers)).toEqual(["research"]);
+    expect(Object.keys(options.mcpServers)).toEqual(["research", "visualize"]);
     expect(options.mcpServers.research.tools.map((t: { name: string }) => t.name)).toEqual([
       "tavily_search",
       "tavily_extract",
@@ -118,6 +118,7 @@ describe("POST /api/chat", () => {
       "mcp__research__vault_search",
       "mcp__research__vault_read",
       "mcp__research__vault_write",
+      "mcp__visualize__visualize",
     ]);
     expect(options.permissionMode).toBe("dontAsk");
     expect(options.maxTurns).toBe(16);
