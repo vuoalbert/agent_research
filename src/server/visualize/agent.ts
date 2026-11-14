@@ -98,7 +98,7 @@ export function jobPrompt(job: JobRecord, paths: JobPaths, studio: StudioPaths) 
     "How to build it:",
     "1. Size: a Figure: one mechanism, 40-80 parts, SVG with at most one WebGL layer. Don't ask; build it.",
     `2. Path: a framework-free standalone HTML page, like examples/dial-indicator: a Node build script in your folder that imports the kit from the skill by relative path (e.g. \`import * as k from "${skill}/kit/iso-kit.mjs"\`) and writes the page with pageHtml and kitScript().`,
-    "3. Theme: light only. Build with --light.",
+    "3. Theme: light only, on a pure white background. Build with --light and set the page and card to #FFFFFF (the --anatomy-page, --anatomy-card and --anatomy-paper colours), so the figure sits on plain white.",
     "4. Truth: the readout, the motion and the caption must be true to the real object.",
     "5. Checks, in proportion to a Figure: a desktop capture, a phone capture (--width 390), the line check (lines.mjs) down to zero, and one or two 4x close-ups of the mechanism; fix what they show. Aim to finish within about 45 minutes, with a working page in the first 15.",
     "6. Finish: copy the final light page to ./figure.html (one self-contained file, everything inlined), then reply with two or three sentences: what the figure shows and how to interact with it.",

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { FIGURE_HEADERS } from "@/server/visualize/figure-headers";
 import { isJobId } from "@/server/visualize/paths";
+import { whiteFigure } from "@/server/visualize/white-figure";
 import { getRunner } from "@/server/visualize/runner";
 
 /**
@@ -18,6 +19,8 @@ import { getRunner } from "@/server/visualize/runner";
  *     and data:/blob: images only — no network at all, no way to send
  *     anything anywhere;
  *   - `nosniff`, `no-store`, no referrer.
+ * The page is shown on plain white: `whiteFigure` pins the kit's paper tones
+ * to #FFFFFF (an inline <style>, which the CSP allows).
  */
 
 export const runtime = "nodejs";
@@ -27,6 +30,7 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/visualize/j
   const { id } = await ctx.params;
   const file = isJobId(id) ? getRunner().figureFile(id) : null;
   if (!file) return new Response("No figure for this job.", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
-  const html = await readFile(file);
+  // served on plain white, whatever paper tone the figure was built with
+  const html = whiteFigure(await readFile(file, "utf8"));
   return new Response(html, { headers: FIGURE_HEADERS });
 }
