@@ -61,6 +61,7 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { VisualizeToolRow } from "@/components/visualize/visualize-tool-row";
+import { WorldToolRow } from "@/components/worlds/world-tool-row";
 import type { Message, ToolCall } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
@@ -208,6 +209,8 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
 function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCall[] }) {
   // a figure job: a box, and it follows the job rather than the call
   if (call.action === "visualize") return <VisualizeToolRow call={call} />;
+  // the chat's World Labs world: a globe, and it follows the world
+  if (call.action === "world") return <WorldToolRow call={call} />;
   if (call.action === "subagents") {
     return <SubagentsBlock call={call} calls={calls} renderCall={(own) => <ToolRow call={own} />} />;
   }

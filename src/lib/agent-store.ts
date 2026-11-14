@@ -63,12 +63,15 @@ export type ToolCall = {
   name: string;
   /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
    *  "vault" for a vault search/read/write, "visualize" for a figure job, "subagents" for a
-   *  deploy_subagents group; absent for a search, and on chats saved before reads */
-  action?: "read" | "crossref" | "vault" | "visualize" | "subagents";
+   *  deploy_subagents group, "world" for the chat's World Labs world; absent for a search,
+   *  and on chats saved before reads */
+  action?: "read" | "crossref" | "vault" | "visualize" | "subagents" | "world";
   /** a vault call's kind, for its row's verb */
   op?: "search" | "read" | "write";
   /** a Visualize call's background job, which the row follows after the call itself is done */
   jobId?: string;
+  /** a World Labs row's chat, whose world the row follows (see src/app/api/chat/world-turn.ts) */
+  chatId?: string;
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
@@ -82,7 +85,7 @@ export type ToolCall = {
   agentId?: string;
 };
 
-const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = ["read", "crossref", "vault", "visualize", "subagents"];
+const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = ["read", "crossref", "vault", "visualize", "subagents", "world"];
 
 export type Message = {
   id: string;
@@ -485,6 +488,7 @@ type ToolEvent =
       action?: ToolCall["action"];
       op?: ToolCall["op"];
       jobId?: string;
+      chatId?: string;
       query: string;
       status: "running";
       subagents?: unknown;
@@ -515,6 +519,7 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
         ...(event.action && ACTIONS.includes(event.action) ? { action: event.action } : {}),
         ...(event.op === "search" || event.op === "read" || event.op === "write" ? { op: event.op } : {}),
         ...(typeof event.jobId === "string" ? { jobId: event.jobId } : {}),
+        ...(typeof event.chatId === "string" ? { chatId: event.chatId } : {}),
         query: event.query,
         status: "running",
         ...(subagents ? { subagents } : {}),

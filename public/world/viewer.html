@@ -1,0 +1,1330 @@
+<!doctype html>
+<!-- Ported from nyc-world by menonsprithvi-web (index.html), nearly verbatim.
+     Agent Research changes: the world and its labels come from the chat's World
+     Labs record (/api/world/chat/<chatId>), labels are saved back there, the chat
+     panel asks /api/world/ask, other sites are fetched by /api/world/page, and
+     Escape (when it is not releasing the mouse) asks the app to close the view. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>World Labs world</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; color: #fff; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; touch-action: none; }
+    .hud { position: fixed; left: 16px; top: 64px; z-index: 3; padding: 8px 12px; border-radius: 8px;
+           background: rgba(0,0,0,.55); backdrop-filter: blur(6px); }
+    .hud h1 { margin: 0 0 4px; font-size: 15px; }
+    .hud p { margin: 2px 0; color: rgba(255,255,255,.7); }
+    .hud a { color: #9cf; }
+    #status { position: fixed; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.75); pointer-events: none; z-index: 4; }
+
+    /* Everything floating in the world (buttons, menus, pages) is projected
+       from 3D every frame and driven by the crosshair, never the mouse. */
+    #world-ui { position: fixed; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
+    /* Web pages are real 3D (CSS3D) so they can sit on a sphere facing inward;
+       the crosshair hit-tests them with a raycast, not the DOM. */
+    #pages3d { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+    /* CSS3DRenderer sets pointer-events:auto on each object; all interaction is
+       via the crosshair, so the real mouse must always reach the 3D scene. */
+    #pages3d * { pointer-events: none !important; }
+    .surface { position: absolute; left: 0; top: 0; transform-origin: 50% 0; will-change: transform; }
+
+    /* ===== Spatial UI — Material 3 dark, Android-XR-style panels & orbiters =====
+       Original styling following the public Material Design 3 guidance; no
+       Google assets are used. Tokens below are the only colours in the UI. */
+    :root {
+      --surface: rgba(30, 31, 36, 0.92);          /* panel surface */
+      --surface-high: rgba(51, 53, 60, 0.96);     /* raised controls */
+      --surface-highest: #3c3e45;
+      --on-surface: #e3e2e6;
+      --on-surface-var: #c4c6d0;
+      --outline: rgba(196, 198, 208, 0.28);
+      --primary: #a8c7fa;
+      --on-primary: #062e6f;
+      --primary-container: #0842a0;
+      --on-primary-container: #d3e3fd;
+      --inverse-surface: #e3e2e6;
+      --inverse-on-surface: #2f3036;
+      --focus: #a8c7fa;
+      --radius-panel: 32px;
+      --font: "Roboto", system-ui, -apple-system, sans-serif;
+    }
+    .icon { width: 1em; height: 1em; display: block; fill: none; stroke: currentColor;
+            stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* Round clear buttons (label + / ×, and the close button in the group) */
+    .orb { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; font-size: 30px;
+           background: rgba(255,255,255,.12); color: #fff; border: 2.5px solid rgba(255,255,255,.9);
+           backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0,0,0,.35);
+           /* Never transition `transform`: it is rewritten every frame to place the
+              button, and animating it makes the button trail behind (dodge the dot). */
+           transition: background .12s, color .12s, box-shadow .12s; }
+    .orb.hover { background: #fff; color: #111; box-shadow: 0 0 0 5px rgba(255,255,255,.35), 0 6px 20px rgba(0,0,0,.45); }
+    /* Chat panel */
+    .menu { position: relative; width: 480px; height: 500px; display: flex; flex-direction: column;
+            border-radius: var(--radius-panel); overflow: hidden; background: var(--surface);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            box-shadow: 0 0 0 1px var(--outline), 0 24px 60px rgba(0,0,0,.5);
+            font: 400 17px/1.45 var(--font); color: var(--on-surface); }
+    .menu header { display: flex; align-items: center; gap: 12px; padding: 18px 14px 6px 24px; }
+    .menu header h2 { flex: 1; margin: 0; font: 500 22px/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .menu .x { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 20px;
+               background: var(--surface-high); color: var(--on-surface); transition: background .12s; }
+    .menu .sub { padding: 0 24px 10px; color: var(--on-surface-var); font: 400 14px/1.4 var(--font); }
+    .menu .log { flex: 1; overflow-y: auto; padding: 6px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 86%; padding: 10px 16px; border-radius: 20px; font: 400 16px/1.45 var(--font); }
+    .msg.bot { align-self: flex-start; background: var(--surface-high); color: var(--on-surface); border-bottom-left-radius: 6px; }
+    .msg.me { align-self: flex-end; background: var(--primary-container); color: var(--on-primary-container); border-bottom-right-radius: 6px; }
+    .msg.note { align-self: flex-start; background: none; color: var(--on-surface-var); font-size: 14px; padding: 2px 6px; }
+    .menu .input-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px 16px; }
+    .menu input { flex: 1; min-width: 0; height: 52px; box-sizing: border-box; padding: 0 22px; border-radius: 26px;
+                  font: 400 17px var(--font); color: var(--on-surface); background: var(--surface-highest);
+                  border: 2px solid transparent; outline: none; transition: border-color .12s; }
+    .menu input::placeholder { color: var(--on-surface-var); }
+    .menu input:focus { border-color: var(--focus); }
+    .menu .send { flex: none; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+                  font-size: 22px; background: var(--primary); color: var(--on-primary); transition: filter .12s; }
+    /* Crosshair focus on a control: Material-style focus ring */
+    .menu .hover { box-shadow: 0 0 0 3px var(--focus); }
+    .menu .x.hover { background: var(--surface-highest); }
+    .menu .send.hover { filter: brightness(1.12); }
+
+    /* Web page "screens": a floating orbiter bar above a rounded panel */
+    .tile { width: 800px; height: 672px; position: relative; background: none; }
+    .tile .orbiter { position: absolute; left: 50%; top: 0; transform: translateX(-50%); max-width: 660px;
+                     height: 56px; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 22px 0 8px;
+                     border-radius: 28px; background: var(--surface); color: var(--on-surface);
+                     backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                     box-shadow: 0 0 0 1px var(--outline), 0 10px 28px rgba(0,0,0,.45); font: 500 19px var(--font); }
+    .tile .orbiter .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile .num { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+                 background: var(--primary-container); color: var(--on-primary-container); font: 500 18px var(--font); }
+    .tile .back { flex: none; height: 40px; padding: 0 16px 0 10px; border-radius: 20px; display: flex; align-items: center; gap: 6px;
+                  background: var(--surface-high); color: var(--on-surface); font: 500 16px var(--font); transition: background .12s; }
+    .tile .back .icon { font-size: 20px; }
+    .tile .back.hover { background: var(--primary); color: var(--on-primary); }
+    .tile .back[hidden] { display: none; }
+    .tile .panel { position: absolute; left: 0; right: 0; top: 72px; bottom: 0; border-radius: var(--radius-panel);
+                   overflow: hidden; background: #fff;
+                   box-shadow: 0 0 0 1px var(--outline), 0 24px 60px rgba(0,0,0,.5); transition: box-shadow .15s; }
+    .tile .panel iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+    .tile .tclose { position: absolute; right: 0; top: 0; width: 64px; height: 64px; border-radius: 50%;
+                    display: grid; place-items: center; font-size: 30px; background: var(--surface); color: var(--on-surface);
+                    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                    box-shadow: 0 0 0 1px var(--outline), 0 8px 20px rgba(0,0,0,.45); transition: background .12s, color .12s; }
+    .tile .tclose.hover { background: var(--primary); color: var(--on-primary); }
+    .tile.live .panel { box-shadow: 0 0 0 4px var(--focus), 0 24px 60px rgba(0,0,0,.5); }
+    .tile.live .orbiter { box-shadow: 0 0 0 2px var(--focus), 0 10px 28px rgba(0,0,0,.45); }
+
+    /* Crosshair dot + hint (Material plain tooltip / snackbar) */
+    #crosshair { position: fixed; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px; z-index: 3;
+                 border-radius: 50%; background: #fff; pointer-events: none; transition: transform .1s; }
+    #crosshair.on-link { transform: scale(1.6); }
+    #crosshair.hidden { display: none; }
+    #hint { position: fixed; left: 50%; top: calc(50% + 22px); transform: translateX(-50%); z-index: 3;
+            max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+            padding: 8px 16px; border-radius: 8px; background: var(--inverse-surface); color: var(--inverse-on-surface);
+            font: 500 14px/1.3 var(--font); box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+    #hint:empty { display: none; }
+    #hint.bottom { top: auto; bottom: 28px; }
+
+    /* Screen-pinned orbiter toolbar while pages are open (moves with the camera) */
+    .hud-pill { position: fixed; z-index: 3; display: flex; align-items: center; gap: 10px;
+                height: 48px; box-sizing: border-box; padding: 0 16px 0 6px; border-radius: 24px;
+                background: var(--surface); color: var(--on-surface); font: 500 15px var(--font);
+                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                box-shadow: 0 0 0 1px var(--outline), 0 8px 24px rgba(0,0,0,.45); }
+    .hud-pill[hidden] { display: none; }
+    #close-hud { top: 18px; right: 18px; cursor: pointer; transition: background .12s; }
+    #close-hud:hover { background: var(--surface-high); }
+    #close-hud .x { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 18px;
+                    background: var(--surface-highest); }
+    .hud-pill kbd { font: 500 12px var(--font); padding: 3px 8px; border-radius: 8px; background: var(--surface-highest); color: var(--on-surface-var); }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="hud">
+    <h1>Midtown NYC</h1>
+    <p>Click to look around · Esc to release · WASD move · Q/E down/up · Shift faster</p>
+    <p>Aim the dot at a ◯ button and click to open its pages · X close · chat under the words answers questions</p>
+    <p>On a page: wheel scrolls, click follows a link · T add label · U undo · P hide/show</p>
+    <p id="quality"></p>
+  </div>
+  <div id="pages3d"></div>
+  <div id="world-ui"></div>
+  <div id="crosshair"></div>
+  <div id="hint"></div>
+  <div id="close-hud" class="hud-pill" hidden><span class="x"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><span class="label">Close</span><kbd>X</kbd></div>
+  <div id="status">Loading 3D world…</div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { SparkRenderer, SplatMesh, SparkControls } from "@sparkjsdev/spark";
+    import { CSS3DRenderer, CSS3DObject } from "three/addons/renderers/CSS3DRenderer.js";
+
+    // Which world: ?chat=<chatId> loads that chat's World Labs record.
+    const params = new URLSearchParams(location.search);
+    const chatId = params.get("chat") ?? "";
+    const worldId = chatId;
+    const WORLD_URL = `/api/world/chat/${encodeURIComponent(chatId)}`;
+    const record = (await (await fetch(WORLD_URL, { cache: "no-store" })).json()).world;
+    const spz = record?.assets?.spz ?? {};
+    const world = {
+      title: record?.title ?? "World",
+      labels: record?.labels ?? [],
+      marble_url: record?.marbleUrl,
+      assets: { splat_500k: spz["500k"] ?? spz.full_res ?? spz["100k"], full_res_spz_url: spz.full_res ?? spz["500k"] },
+    };
+    const full = params.get("quality") === "full";
+    const url = full ? world.assets.full_res_spz_url : world.assets.splat_500k;
+    if (!url) {
+      document.getElementById("status").textContent = "This chat has no World Labs world yet.";
+      throw new Error("no world for this chat");
+    }
+
+    document.title = `${world.title} — a World Labs Marble world`;
+    document.querySelector(".hud h1").textContent = world.title;
+    const q = document.getElementById("quality");
+    const link = (extra) => `?chat=${encodeURIComponent(chatId)}${extra}`;
+    q.innerHTML = (full
+      ? `Full resolution · <a href="${link("")}">use 500k</a>`
+      : `500k splats · <a href="${link("&quality=full")}">load full resolution (large download)</a>`) +
+      (world.marble_url ? ` · <a href="${world.marble_url}" target="_blank" rel="noopener">open in Marble ↗</a>` : "");
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+    const canvas = renderer.domElement;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 1000);
+    scene.add(new SparkRenderer({ renderer }));
+
+    const splats = new SplatMesh({ url });
+    // Marble SPZ files use an OpenCV frame; rotate 180° about X for three.js (y-up).
+    splats.quaternion.set(1, 0, 0, 0);
+    scene.add(splats);
+
+    const status = document.getElementById("status");
+    splats.initialized
+      .then(() => status.remove())
+      .catch((e) => { status.textContent = "Couldn't load the 3D world: " + e; });
+
+    // Spark handles WASD/QE movement; mouse-look is ours (pointer lock).
+    const controls = new SparkControls({ canvas });
+    controls.fpsMovement.moveSpeed = 1.5;
+    controls.pointerControls.enable = false;
+
+    // Pages on the sphere are rendered by a CSS3D renderer over the canvas.
+    const cssScene = new THREE.Scene();
+    const cssRenderer = new CSS3DRenderer({ element: document.getElementById("pages3d") });
+    cssRenderer.setSize(innerWidth, innerHeight);
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      cssRenderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ---------- Floating words ----------
+    // Plain text (no background) drawn to a canvas sprite that always faces
+    // the camera. depthTest is off so splats never hide it.
+    function makeLabel({ text, color = "#ffffff", size = 1 }) {
+      const font = "700 64px system-ui, -apple-system, Helvetica, sans-serif";
+      const c = document.createElement("canvas");
+      const ctx = c.getContext("2d");
+      ctx.font = font;
+      const pad = 16;
+      const w = Math.ceil(ctx.measureText(text).width) + pad * 2;
+      const h = 64 + pad * 2;
+      c.width = w;
+      c.height = h;
+      ctx.font = font;
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0,0,0,0.85)";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = color;
+      ctx.fillText(text, pad, h / 2 + 2);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }),
+      );
+      const height = 0.24 * size; // world units (≈ metres)
+      sprite.scale.set((height * w) / h, height, 1);
+      sprite.renderOrder = 10;
+      return sprite;
+    }
+
+    // Labels come from the world's config (worlds/<id>.json). Positions are
+    // [x, y, z] relative to the starting viewpoint: -z is straight ahead, +x is
+    // right, +y is up. `query` picks the 6 sources; `url` (optional) is pinned.
+    const WIKI = "https://en.wikipedia.org/wiki/";
+    const DEFAULT_LABELS = world.labels ?? [];
+    // Labels live on the chat's world record (T adds one, U undoes the last).
+    let labels = DEFAULT_LABELS;
+    const saveLabels = () => fetch(`${WORLD_URL}/labels`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ labels }),
+    }).catch(() => {});
+
+    const uiLayer = document.getElementById("world-ui");
+    let uiVisible = true;
+    const items = [];    // per label: { data, sprite, baseY, phase, right, toward, orb, cluster }
+    const surfaces = []; // everything projected: { el, pos, widthM, pxW, kind, owner, ... }
+
+    // ---------- Page loading (same-origin reading views) ----------
+    const TILE_W = 800, TILE_H = 672; // 72px orbiter row + 600px page panel
+
+    const READER_CSS = `
+      html { scroll-behavior: auto; }
+      body { margin: 0; padding: 22px 30px 60px; font: 30px/1.5 Georgia, "Times New Roman", serif; color: #202122; background: #fff; }
+      h1, h2, h3 { font-family: system-ui, sans-serif; line-height: 1.25; }
+      img { max-width: 100%; height: auto; }
+      table { max-width: 100%; }
+      .infobox { float: right; width: 42%; margin: 0 0 16px 18px; font-size: 18px; border-collapse: collapse; }
+      .infobox td, .infobox th { padding: 3px 6px; vertical-align: top; }
+      .mw-editsection, .navbox, .metadata, .ambox, .hatnote, .noprint, .mw-empty-elt, .reference { display: none !important; }
+      a { color: #3366cc; text-decoration: none; }
+      a.xhair-hover { background: #ffe98a; outline: 3px solid #f5b400; border-radius: 3px; color: #111; }
+      mark.xhl { background: #7cf0a8; color: #111; padding: 2px 3px; border-radius: 4px; box-shadow: 0 0 0 3px #2fbf71; }
+      .source { margin-top: 40px; font: 16px system-ui, sans-serif; color: #72777d; }
+      .paper h1 { font: 500 38px/1.25 Roboto, system-ui, sans-serif; margin: 6px 0 12px; }
+      .paper h2 { font: 500 24px/1.3 Roboto, system-ui, sans-serif; margin: 34px 0 10px; color: #1f1f1f; }
+      .chips { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 14px; font: 500 18px Roboto, system-ui, sans-serif; }
+      .chip { padding: 6px 14px; border-radius: 10px; background: #e8eef9; color: #0b3d91; }
+      .chip.cited { background: #0842a0; color: #fff; }
+      .chip.oa { background: #e3f4e8; color: #0b6b2f; }
+      .authors { font: 400 21px/1.45 Roboto, system-ui, sans-serif; color: #444; margin-bottom: 16px; }
+      .btns { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0 8px; }
+      .btns a { display: inline-block; padding: 10px 20px; border-radius: 22px; font: 500 19px Roboto, system-ui, sans-serif;
+                background: #0842a0; color: #fff; }
+      .btns a.alt { background: #e8eef9; color: #0b3d91; }
+      .abstract { font-size: 28px; line-height: 1.55; }
+      ol.works { padding-left: 34px; font: 400 21px/1.4 Roboto, system-ui, sans-serif; }
+      ol.works li { margin: 0 0 12px; }
+      ol.works .n { color: #666; font-size: 18px; }
+    `;
+    const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+    const wikiTitle = (u) => {
+      const m = u.match(/^https:\/\/en\.wikipedia\.org\/wiki\/([^?#]+)/);
+      return m && !/^[A-Za-z_]+:/.test(decodeURIComponent(m[1])) ? decodeURIComponent(m[1]) : null;
+    };
+
+    async function searchWiki(query, limit = 6) {
+      const api = "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*" +
+        `&srlimit=${limit + 2}&srsearch=` + encodeURIComponent(query);
+      const data = await (await fetch(api)).json();
+      return (data.query?.search ?? []).map((r) => WIKI + encodeURIComponent(r.title.replace(/ /g, "_")));
+    }
+
+    // OpenAlex: an open index of scholarly works (papers, citations, venues).
+    // Works are addressed by their canonical URL, https://openalex.org/W….
+    const oaId = (u) => u?.match(/^https:\/\/openalex\.org\/(W\d+)$/)?.[1] ?? null;
+    const titleCache = new Map(); // work URL → title, for screen titles before load
+
+    async function searchScholar(query, limit = 6) {
+      const api = "https://api.openalex.org/works?search=" + encodeURIComponent(query) +
+        `&filter=has_abstract:true&per-page=${limit}&select=id,display_name`;
+      const data = await (await fetch(api)).json();
+      return (data.results ?? []).map((w) => { titleCache.set(w.id, w.display_name); return w.id; });
+    }
+
+    async function workList(ids) {
+      if (!ids.length) return [];
+      const api = "https://api.openalex.org/works?filter=openalex_id:" + ids.map((u) => u.split("/").pop()).join("|") +
+        `&per-page=${ids.length}&select=id,display_name,publication_year,cited_by_count`;
+      const data = await (await fetch(api)).json();
+      return (data.results ?? []).sort((a, b) => b.cited_by_count - a.cited_by_count);
+    }
+
+    // OpenAlex stores abstracts as {word: [positions]}; rebuild the text.
+    function abstractText(inv) {
+      if (!inv) return "";
+      const words = [];
+      for (const [w, pos] of Object.entries(inv)) for (const p of pos) words[p] = w;
+      return words.filter(Boolean).join(" ");
+    }
+
+    async function paperHtml(id) {
+      const w = await (await fetch("https://api.openalex.org/works/" + id)).json();
+      if (w.error) throw new Error(w.error);
+      const [refs, related] = await Promise.all([
+        workList((w.referenced_works ?? []).slice(0, 12)),
+        workList((w.related_works ?? []).slice(0, 8)),
+      ]);
+      const venue = w.primary_location?.source?.display_name;
+      const authors = (w.authorships ?? []).map((a) => a.author?.display_name).filter(Boolean);
+      const pdf = w.open_access?.oa_url;
+      const list = (ws) => ws.length
+        ? `<ol class="works">${ws.map((r) => `<li><a href="${esc(r.id)}">${esc(r.display_name)}</a> <span class="n">(${r.publication_year ?? "n.d."} · cited by ${r.cited_by_count.toLocaleString()})</span></li>`).join("")}</ol>`
+        : "<p>None listed.</p>";
+      titleCache.set(w.id, w.display_name);
+      return {
+        title: w.display_name,
+        html: `<!doctype html><html><head><meta charset="utf-8"><base href="https://openalex.org/"><style>${READER_CSS}</style></head>
+          <body class="paper">
+            <div class="chips">
+              <span class="chip cited">Cited by ${(w.cited_by_count ?? 0).toLocaleString()}</span>
+              ${w.publication_year ? `<span class="chip">${w.publication_year}</span>` : ""}
+              ${w.type ? `<span class="chip">${esc(w.type)}</span>` : ""}
+              ${w.open_access?.is_oa ? `<span class="chip oa">Open access</span>` : ""}
+            </div>
+            <h1>${esc(w.display_name)}</h1>
+            <div class="authors">${esc(authors.slice(0, 8).join(", "))}${authors.length > 8 ? ` + ${authors.length - 8} more` : ""}${venue ? ` — <i>${esc(venue)}</i>` : ""}</div>
+            <div class="btns">
+              ${w.doi ? `<a href="${esc(w.doi)}">DOI ↗</a>` : ""}
+              ${pdf ? `<a class="alt" href="${esc(pdf)}">Free full text ↗</a>` : ""}
+            </div>
+            <h2>Abstract</h2>
+            <p class="abstract">${esc(abstractText(w.abstract_inverted_index)) || "No abstract available."}</p>
+            <h2>Most-cited references</h2>${list(refs)}
+            <h2>Related papers</h2>${list(related)}
+            <p class="source">Scholarly metadata from OpenAlex (openalex.org, CC0). Abstracts belong to their publishers.</p>
+          </body></html>`,
+      };
+    }
+
+    async function fetchPageHtml(pageUrl) {
+      const work = oaId(pageUrl);
+      if (work) return paperHtml(work);
+      const title = wikiTitle(pageUrl);
+      if (title) {
+        const api = "https://en.wikipedia.org/w/api.php?action=parse&format=json&formatversion=2&origin=*" +
+          "&redirects=1&mobileformat=1&disableeditsection=1&prop=text|displaytitle&page=" + encodeURIComponent(title);
+        const data = await (await fetch(api)).json();
+        if (data.error) throw new Error(data.error.info);
+        return {
+          title: data.parse.title,
+          html: `<!doctype html><html><head><meta charset="utf-8"><base href="https://en.wikipedia.org/wiki/">` +
+            `<style>${READER_CSS}</style></head><body><h1>${data.parse.displaytitle}</h1>${data.parse.text}` +
+            `<p class="source">From Wikipedia, the free encyclopedia (CC BY-SA 4.0).</p></body></html>`,
+        };
+      }
+      // Any other site: the local server fetches it (browsers block most
+      // cross-site fetches); we keep just the main content, without scripts.
+      const res = await fetch("/api/world/page?url=" + encodeURIComponent(pageUrl));
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      const finalUrl = res.headers.get("x-final-url") || pageUrl;
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      doc.querySelectorAll("script, noscript, iframe, style, link, nav, header, footer, aside, form, button, svg, [role=navigation], [aria-hidden=true]")
+        .forEach((n) => n.remove());
+      // Drop page furniture by name (menus, search, breadcrumbs, banners…).
+      const JUNK = /(^|[-_\s])(nav|navbar|menu|header|footer|breadcrumbs?|search|skip|banner|social|share|cookie|subscribe|promo|sidebar|toolbar|utility|language|logo)([-_\s]|$)/i;
+      doc.querySelectorAll("[class], [id]").forEach((n) => {
+        if (n.isConnected && n !== doc.body && JUNK.test(`${n.id} ${n.className}`)) n.remove();
+      });
+      // Pick the main content the way reader modes do: credit each paragraph's
+      // text to its parent (and half to its grandparent); the top scorer wins.
+      const scores = new Map();
+      for (const p of doc.body.querySelectorAll("p, li, dd, blockquote")) {
+        const len = p.textContent.trim().length;
+        if (len < 40) continue;
+        const parent = p.parentElement, grand = parent?.parentElement;
+        if (parent) scores.set(parent, (scores.get(parent) ?? 0) + len);
+        if (grand) scores.set(grand, (scores.get(grand) ?? 0) + len / 2);
+      }
+      let main = doc.querySelector("article, main, [role=main]") ?? doc.body;
+      let best = 0;
+      for (const [el, sc] of scores) if (sc > best) { best = sc; main = el; }
+      // Prefer a semantic wrapper around the winner if there is one.
+      main = main.closest("article, main, [role=main]") ?? main;
+      main.querySelectorAll("img:not([src]), img[src=''], select, input").forEach((n) => n.remove());
+      const pageTitle = doc.querySelector("h1")?.textContent.trim() || doc.title || pageUrl;
+      const host = new URL(finalUrl).hostname.replace(/^www\./, "");
+      return {
+        title: pageTitle,
+        html: `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(finalUrl)}"><style>${READER_CSS}</style></head>
+          <body><div class="chips"><span class="chip">${esc(host)}</span></div>${main?.innerHTML ?? ""}
+          <p class="source">Source: <a href="${esc(finalUrl)}">${esc(finalUrl)}</a></p></body></html>`,
+      };
+    }
+
+    const niceTitle = (u) => titleCache.get(u) ?? (oaId(u) ? "Paper" : decodeURIComponent((wikiTitle(u) ?? u).replace(/_/g, " ")));
+
+    async function loadPage(t, pageUrl, { push = true } = {}) {
+      if (push && t.current) t.history.push(t.current);
+      t.current = pageUrl;
+      t.backBtn.hidden = t.history.length === 0;
+      t.titleEl.textContent = "Loading…";
+      try {
+        const { title, html } = await fetchPageHtml(pageUrl);
+        if (t.current !== pageUrl) return; // superseded
+        t.frame.srcdoc = html;
+        t.titleEl.textContent = title;
+      } catch (err) {
+        t.frame.srcdoc = `<body style="font:22px system-ui;padding:30px;color:#444">Couldn't load this page here.<br><small>${String(err.message).replace(/</g, "&lt;")}</small></body>`;
+        t.titleEl.textContent = niceTitle(pageUrl);
+      }
+    }
+
+    // ---------- Screen actions from the chat ----------
+    // Scroll a screen to the first occurrence of `text` and highlight it.
+    // The phrase may span several text nodes (links, italics), so search the
+    // page's whole text and map the match back onto the nodes. If the exact
+    // phrase isn't there, fall back to the longest run of its words that is.
+    // Returns the text that was highlighted, or null.
+    function highlightText(t, text) {
+      const doc = t.frame.contentDocument;
+      if (!doc?.body || !text) return null;
+      doc.querySelectorAll("mark.xhl").forEach((m) => m.replaceWith(...m.childNodes));
+      doc.body.normalize();
+
+      const nodes = [];
+      let full = "";
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+      for (let n; (n = walker.nextNode()); ) {
+        if (n.parentElement?.closest("style, script")) continue;
+        nodes.push({ node: n, start: full.length });
+        full += n.textContent;
+      }
+      const words = text.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      let match = null;
+      for (let len = words.length; len >= Math.min(2, words.length) && !match; len--) {
+        for (let i = 0; i + len <= words.length && !match; i++) {
+          match = new RegExp(words.slice(i, i + len).join("\\s+"), "i").exec(full);
+        }
+      }
+      if (!match) return null;
+
+      const from = match.index, to = match.index + match[0].length;
+      let first = null;
+      // Wrap each overlapping node's slice, last first so offsets stay valid.
+      for (const { node, start } of [...nodes].reverse()) {
+        const end = start + node.textContent.length;
+        if (end <= from || start >= to) continue;
+        const range = doc.createRange();
+        range.setStart(node, Math.max(0, from - start));
+        range.setEnd(node, Math.min(node.textContent.length, to - start));
+        const mark = doc.createElement("mark");
+        mark.className = "xhl";
+        range.surroundContents(mark);
+        first = mark;
+      }
+      first?.scrollIntoView({ block: "center" });
+      return match[0];
+    }
+
+    // Wait until a screen has finished loading `pageUrl`.
+    const waitForLoad = (t) => new Promise((resolve) => {
+      const done = () => { t.frame.removeEventListener("load", done); resolve(); };
+      t.frame.addEventListener("load", done);
+      setTimeout(done, 8000);
+    });
+
+    async function runActions(item, actions) {
+      const tiles = item.cluster.tiles;
+      const notes = [];
+      for (const a of actions) {
+        const screen = Number(a?.screen);
+        const t = tiles[screen - 1];
+        if (a?.type === "open" && t && (typeof a.url === "string" || typeof (a.query ?? a.page) === "string")) {
+          let pageUrl = null;
+          if (typeof a.url === "string" && /^https?:\/\//.test(a.url)) pageUrl = a.url.trim();
+          else {
+            const q = (a.query ?? a.page).trim();
+            pageUrl = (await searchScholar(q, 1).catch(() => []))[0];
+            if (!pageUrl) { notes.push(`↳ couldn't find a paper for “${q}”`); continue; }
+          }
+          const loaded = waitForLoad(t);
+          await loadPage(t, pageUrl);
+          await loaded;
+          notes.push(`↳ opened “${t.titleEl.textContent || niceTitle(pageUrl)}” on screen ${screen}`);
+        } else if (a?.type === "find" && t && typeof a.text === "string") {
+          const found = highlightText(t, a.text);
+          notes.push(found
+            ? `↳ highlighted “${found}” on screen ${screen}`
+            : `↳ couldn't find “${a.text}” on screen ${screen}`);
+        } else if (a?.type === "topic" && typeof a.query === "string") {
+          const urls = await fillTiles(item, a.query);
+          notes.push(`↳ showing ${urls.length} pages about “${a.query}”`);
+        }
+      }
+      return notes;
+    }
+
+    // Point a tile at a new page and load it.
+    function setTileUrl(t, pageUrl) {
+      t.url = pageUrl;
+      t.history = [];
+      t.current = null;
+      t.backBtn.hidden = true;
+      t.titleEl.textContent = pageUrl ? "📄 " + niceTitle(pageUrl) : "—";
+      t.frame.srcdoc = "";
+      if (pageUrl) loadPage(t, pageUrl, { push: false });
+    }
+
+    // ---------- Building the floating UI ----------
+    function addSurface(el, kind, pxW, widthM, pos, extra = {}) {
+      el.classList.add("surface");
+      uiLayer.appendChild(el);
+      const s = { el, kind, pxW, widthM, pos, ...extra };
+      surfaces.push(s);
+      return s;
+    }
+
+    const TILE_WM = 1.5; // tile width in metres
+    const ORBIT_H = 72;  // height of the orbiter row above each page panel, px
+    // Simple line icons (drawn here, stroked with currentColor).
+    const ICON = {
+      close: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+      plus: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+      back: '<svg class="icon" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+      send: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+    };
+
+    function makeTile(item, index) {
+      const el = document.createElement("div");
+      el.className = "tile";
+      const bar = document.createElement("div");
+      bar.className = "orbiter";
+      const backBtn = document.createElement("span");
+      backBtn.className = "back";
+      backBtn.innerHTML = `${ICON.back}<span>Back</span>`;
+      backBtn.hidden = true;
+      const titleEl = document.createElement("span");
+      titleEl.className = "title";
+      titleEl.textContent = "Finding pages…";
+      const num = document.createElement("span");
+      num.className = "num";
+      num.textContent = String(index + 1); // screen number, so you and the chat can refer to it
+      bar.append(num, backBtn, titleEl);
+      const frame = document.createElement("iframe");
+      // Same-origin (srcdoc) but no scripts: we can drive it, it can't run code.
+      frame.setAttribute("sandbox", "allow-same-origin");
+      const panel = document.createElement("div");
+      panel.className = "panel";
+      panel.append(frame);
+      const closeBtn = document.createElement("span");
+      closeBtn.className = "tclose";
+      closeBtn.innerHTML = ICON.close;
+      el.append(bar, panel, closeBtn);
+      const obj = new CSS3DObject(el);
+      obj.scale.setScalar(TILE_WM / TILE_W); // CSS px → metres
+      cssScene.add(obj);
+      return { kind: "tile", el, obj, owner: item, index, frame, backBtn, closeBtn, titleEl, open: true, history: [], current: null, url: null };
+    }
+
+    function makeMenu(item) {
+      const el = document.createElement("div");
+      el.className = "menu";
+      el.innerHTML = `
+        <header><h2></h2><span class="x" data-action="close">${ICON.close}</span></header>
+        <div class="sub">Ask anything about the 6 pages · /pages &lt;topic&gt; to change them</div>
+        <div class="log"></div>
+        <div class="input-row"><input data-action="chat" placeholder="Ask about these pages…" /><span class="send" data-action="send">${ICON.send}</span></div>`;
+      el.querySelector("h2").textContent = item.data.text;
+      const input = el.querySelector("input");
+      input.addEventListener("focus", () => { controls.fpsMovement.enable = false; });
+      input.addEventListener("blur", () => { controls.fpsMovement.enable = true; });
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") sendChat(item);
+        if (e.key === "Escape") input.blur();
+      });
+      return addSurface(el, "menu", 480, 1.2, new THREE.Vector3(), { owner: item, input, log: el.querySelector(".log") });
+    }
+
+    function botSay(item, text) {
+      const m = document.createElement("div");
+      m.className = "msg bot";
+      m.textContent = text;
+      item.cluster.menu.log.append(m);
+      m.scrollIntoView({ block: "end" });
+    }
+
+    async function fillTiles(item, query) {
+      // The label's own research sources go first (then encyclopedia / papers).
+      const own = (item.data.sources ?? []).filter((s) => /^https?:\/\//.test(s?.url ?? ""));
+      for (const s of own) if (s.title) titleCache.set(s.url, s.title);
+      const pinned = item.cluster.firstFill ? [item.data.url, ...own.map((s) => s.url)].filter(Boolean).slice(0, 3) : [];
+      item.cluster.firstFill = false;
+      let found = [];
+      // Interleave encyclopedia articles (Wikipedia, with its citations) and
+      // scholarly papers (OpenAlex), topping up from whichever has more.
+      const [wiki, papers] = await Promise.all([
+        searchWiki(query, 6).catch(() => []),
+        searchScholar(query, 6).catch(() => []),
+      ]);
+      // Order: pinned, then alternate encyclopedia / paper, then the rest.
+      // Skip repeats by title (OpenAlex sometimes lists one paper twice).
+      const order = [...pinned];
+      for (let i = 0; i < 3; i++) order.push(wiki[i], papers[i]);
+      order.push(...wiki.slice(3), ...papers.slice(3));
+      const seen = new Set();
+      for (const u of order) {
+        if (!u || found.length >= 6) continue;
+        const key = niceTitle(u).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push(u);
+      }
+      const urls = found;
+      item.cluster.tiles.forEach((t, i) => setTileUrl(t, urls[i] ?? null));
+      return urls;
+    }
+
+    // Chat: questions go to Claude along with the text of all six pages.
+    // "/pages <topic>" swaps the six pages to a new topic instead.
+    async function sendChat(item) {
+      const cluster = item.cluster;
+      const input = cluster.menu.input;
+      const text = input.value.trim();
+      if (!text || cluster.busy) return;
+      input.value = "";
+      const m = document.createElement("div");
+      m.className = "msg me";
+      m.textContent = text;
+      cluster.menu.log.append(m);
+
+      const topic = text.match(/^\/pages\s+(.+)/i)?.[1];
+      if (topic) {
+        botSay(item, "Looking…");
+        const urls = await fillTiles(item, topic);
+        cluster.menu.log.lastChild.remove();
+        botSay(item, urls.length
+          ? `Here are ${urls.length} pages about “${topic}”: ${urls.map((u, i) => `${i + 1}. ${niceTitle(u)}`).join(" · ")}`
+          : `I couldn't find pages about “${topic}”.`);
+        return;
+      }
+
+      // Send what's actually on each screen right now (including pages you've
+      // navigated to), in full.
+      const pages = cluster.tiles.map((t) => ({
+        title: t.titleEl.textContent,
+        url: t.current ?? t.url ?? "",
+        text: t.frame.contentDocument?.body?.innerText ?? "",
+      })).filter((p) => p.text.trim());
+      if (!pages.length) return botSay(item, "The pages are still loading — try again in a moment.");
+
+      cluster.busy = true;
+      botSay(item, "…");
+      const reply = cluster.menu.log.lastChild;
+      let answer = "";
+      try {
+        const res = await fetch("/api/world/ask", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question: text, pages, history: cluster.history }),
+        });
+        if (!res.ok || !res.body) throw new Error(res.status === 404 || res.status === 405
+          ? "the chat route isn't available" : `HTTP ${res.status}`);
+        // Read the server-sent events stream: "delta" text, then "done"/"error".
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const chunk = buf.slice(0, i);
+            buf = buf.slice(i + 2);
+            const ev = chunk.match(/^event: (.+)$/m)?.[1];
+            const data = JSON.parse(chunk.match(/^data: (.+)$/m)?.[1] ?? "{}");
+            if (ev === "delta") {
+              answer += data.text;
+              // The trailing ```actions block is for us, not for display.
+              reply.textContent = answer.split("```actions")[0].trimEnd() || "…";
+              reply.scrollIntoView({ block: "end" });
+            } else if (ev === "error") throw new Error(data.message);
+          }
+        }
+        cluster.history.push({ role: "user", content: text }, { role: "assistant", content: answer });
+
+        // Carry out any screen actions Claude asked for.
+        const block = answer.match(/```actions\s*([\s\S]*?)```/)?.[1];
+        if (block) {
+          let actions = [];
+          try { actions = JSON.parse(block); } catch { actions = []; }
+          const notes = await runActions(item, Array.isArray(actions) ? actions : [actions]);
+          if (notes.length) {
+            const n = document.createElement("div");
+            n.className = "msg bot note";
+            n.textContent = notes.join(" · ");
+            cluster.menu.log.append(n);
+            n.scrollIntoView({ block: "end" });
+          }
+        }
+      } catch (err) {
+        reply.textContent = `Sorry — ${err.message}`;
+      } finally {
+        cluster.busy = false;
+      }
+    }
+
+    // The 6 pages sit on a sphere around you, in a compact 2 × 3 group just to
+    // the right of the label as seen from where you stand, each facing you.
+    // Angles are measured from the direction towards the label.
+    const SPHERE_R = 3.6;          // metres from you — far enough that all six fit in view
+    const COLS_DEG = [26, 60];     // right of the label, clear of the words, button and chatbox
+    const ROWS_DEG = [21.5, 0, -21.5]; // up / level / down (whole group fits inside the 70° view)
+
+    function openCluster(item) {
+      if (item.cluster) return;
+      for (const other of items) if (other !== item) closeCluster(other); // only one open at a time
+      const L = new THREE.Vector3(item.data.position[0], item.baseY, item.data.position[2]);
+      const t = item.toward;
+
+      // Chatbox: part of the moving group (left of the screens); when the group
+      // is left in place (F) it hangs just below the label's words instead.
+      const menu = makeMenu(item);
+      menu.homePos = L.clone().setY(L.y - item.sprite.scale.y / 2 - 0.08);
+      // A close button that moves with the group (sits above the chat panel).
+      const gcEl = document.createElement("div");
+      gcEl.className = "orb";
+      gcEl.innerHTML = ICON.close;
+      const groupClose = addSurface(gcEl, "orb", 64, 0.22, new THREE.Vector3(), { owner: item, groupClose: true });
+
+      const tiles = [];
+      for (const col of COLS_DEG) {
+        for (const row of ROWS_DEG) {
+          const tile = makeTile(item, tiles.length);
+          tile.th = THREE.MathUtils.degToRad(col);
+          tile.ph = THREE.MathUtils.degToRad(row);
+          tiles.push(tile);
+        }
+      }
+      // The group is laid out around where you open it, as one curved display.
+      // Its middle (the anchor) stays fixed in the world; as you walk, the whole
+      // display swivels about the anchor to face you, so its layout never
+      // changes and no screen ends up behind another.
+      const center0 = camera.position.clone();
+      const toLabel0 = flatDirTo(camera.position, L, t.clone().negate());
+      const c = { menu, tiles, groupClose, firstFill: true, history: [], busy: false, label: L,
+                  center: center0.clone(), toLabel: toLabel0.clone() };
+      const midDir = groupDir(c, THREE.MathUtils.degToRad(GROUP_MID_DEG), 0);
+      c.anchor = center0.clone().addScaledVector(midDir, SPHERE_R).setY(center0.y);
+      c.toLabel0 = toLabel0;
+      c.fromAnchor0 = midDir.clone().negate(); // horizontal: anchor → viewer at open
+      c.yaw = 0;
+      item.cluster = c;
+      placeGroup(c);
+      updateCloseHud();
+      botSay(item, `Showing pages about “${item.data.query ?? item.data.text}”. Ask me anything about them.`);
+      fillTiles(item, item.data.query ?? item.data.text);
+    }
+
+    // Horizontal unit direction from `from` to `to` (or `fallback` if too close).
+    function flatDirTo(from, to, fallback) {
+      const d = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+      return d.lengthSq() < 0.25 ? fallback.clone() : d.normalize();
+    }
+
+    // Put every page on the sphere around cluster.center, laid out relative to
+    // the direction towards the label, each turned to face `faceTarget`.
+    const UP = new THREE.Vector3(0, 1, 0);
+    // Unit direction at (th, ph) radians: th to the right of the label
+    // direction, ph above the horizon.
+    function groupDir(cluster, th, ph) {
+      const f = cluster.toLabel;
+      const r = new THREE.Vector3(-f.z, 0, f.x); // to your right when facing the label
+      return f.clone().multiplyScalar(Math.cos(th)).addScaledVector(r, Math.sin(th))
+        .multiplyScalar(Math.cos(ph)).addScaledVector(UP, Math.sin(ph)).normalize();
+    }
+
+    // Lay the screens (and, when moving with you, the chatbox) out on the
+    // sphere around cluster.center. Screens face `faceTarget` (default: the
+    // centre, i.e. you).
+    const MENU_EL = THREE.MathUtils.degToRad(11); // chatbox top edge, above the horizon
+    function placeGroup(cluster, faceTarget = cluster.center) {
+      for (const tile of cluster.tiles) {
+        tile.obj.position.copy(cluster.center).addScaledVector(groupDir(cluster, tile.th, tile.ph), SPHERE_R);
+        tile.obj.lookAt(faceTarget);
+        tile.obj.updateMatrixWorld();
+      }
+      // Chat panel on the left of the screens; close button just above it.
+      cluster.menu.pos.copy(cluster.center).addScaledVector(groupDir(cluster, 0, MENU_EL), SPHERE_R);
+      cluster.groupClose.pos.copy(cluster.menu.pos).setY(cluster.menu.pos.y + 0.22);
+    }
+    // Middle of the arrangement (chat at 0°, screens out to 60°): the pivot.
+    const GROUP_MID_DEG = (0 + COLS_DEG[COLS_DEG.length - 1]) / 2;
+
+    // Turn the whole display about its fixed anchor so it faces you. Only the
+    // yaw changes (smoothed so it glides); size, height and layout stay the same.
+    function swivelGroup(c) {
+      const d = new THREE.Vector3(camera.position.x - c.anchor.x, 0, camera.position.z - c.anchor.z);
+      if (d.lengthSq() > 0.25) {
+        d.normalize();
+        const u = c.fromAnchor0;
+        const target = Math.atan2(u.z * d.x - u.x * d.z, u.x * d.x + u.z * d.z); // signed angle u → d
+        let delta = target - c.yaw;
+        delta = Math.atan2(Math.sin(delta), Math.cos(delta)); // shortest way round
+        c.yaw += delta * 0.2;
+      }
+      c.toLabel.copy(c.toLabel0).applyAxisAngle(UP, c.yaw);
+      c.center.copy(c.anchor).addScaledVector(c.fromAnchor0.clone().applyAxisAngle(UP, c.yaw), SPHERE_R)
+        .setY(c.anchor.y);
+      placeGroup(c); // screens face the display's own centre, keeping its curve
+    }
+
+    // Close button pinned to the screen while pages are open (and the X key).
+    const closeHud = document.getElementById("close-hud");
+    const openItem = () => items.find((it) => it.cluster);
+    function updateCloseHud() {
+      for (const x of items) { // world button: × while open
+        x.orb.el.innerHTML = x.cluster ? ICON.close : ICON.plus;
+        x.orb.el.dataset.state = x.cluster ? "close" : "open";
+        x.orb.el.classList.toggle("open", !!x.cluster);
+      }
+      const it = openItem();
+      closeHud.hidden = !it;
+      if (it) closeHud.querySelector(".label").textContent = `Close “${it.data.text}”`;
+    }
+    closeHud.addEventListener("click", () => { const it = openItem(); if (it) closeCluster(it); });
+
+    function closeCluster(item) {
+      if (!item.cluster) return;
+      const { menu, tiles, groupClose } = item.cluster;
+      for (const sf of [menu, groupClose]) {
+        sf.el.remove();
+        surfaces.splice(surfaces.indexOf(sf), 1);
+      }
+      for (const t of tiles) {
+        cssScene.remove(t.obj);
+        t.el.remove();
+      }
+      if (target && (target === menu || target === groupClose || tiles.includes(target))) target = null;
+      item.cluster = null;
+      updateCloseHud();
+    }
+
+    function buildAll() {
+      for (const it of items.splice(0)) {
+        closeCluster(it);
+        scene.remove(it.sprite);
+        it.sprite.material.map.dispose();
+        it.sprite.material.dispose();
+        it.orb.el.remove();
+        surfaces.splice(surfaces.indexOf(it.orb), 1);
+      }
+      labels.forEach((data, i) => {
+        const sprite = makeLabel(data);
+        sprite.position.fromArray(data.position);
+        scene.add(sprite);
+        // "toward" points from the label to the starting viewpoint; "right"
+        // is to the viewer's right when facing the label.
+        const toward = new THREE.Vector3(-data.position[0], 0, -data.position[2]).normalize();
+        const right = new THREE.Vector3(toward.z, 0, -toward.x);
+        const item = { data, sprite, baseY: data.position[1], phase: i * 1.3, right, toward, cluster: null };
+        const orbEl = document.createElement("div");
+        orbEl.className = "orb";
+        orbEl.innerHTML = ICON.plus;
+        orbEl.dataset.state = "open";
+        item.orb = addSurface(orbEl, "orb", 64, 0.2, new THREE.Vector3(), { owner: item });
+        items.push(item);
+      });
+    }
+
+    // ---------- Projection ----------
+    const tmp = new THREE.Vector3();
+    function layout(time) {
+      for (const it of items) {
+        const y = it.baseY; // nothing bobs: words, buttons and pages stay put
+        it.sprite.position.y = y;
+        it.sprite.visible = uiVisible;
+        if (it.cluster) for (const tl of it.cluster.tiles) tl.obj.visible = uiVisible;
+        // Orb sits just right of the words, vertically centred on them.
+        if (it.orb) it.orb.pos.set(it.data.position[0], y + 0.1, it.data.position[2])
+          .addScaledVector(it.right, it.sprite.scale.x / 2 + 0.18);
+      }
+      const halfH = innerHeight / 2;
+      const focal = halfH / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      for (const s of surfaces) {
+        const pxH = s.el.offsetHeight || s.pxW;
+        const heightM = (pxH * s.widthM) / s.pxW;
+        tmp.set(s.pos.x, s.pos.y - heightM / 2, s.pos.z).applyMatrix4(camera.matrixWorldInverse);
+        const depth = -tmp.z;
+        if (!uiVisible || depth < 0.3) {
+          s.el.style.visibility = "hidden";
+          s.onScreen = false;
+          continue;
+        }
+        const scale = (s.widthM * focal) / depth / s.pxW;
+        tmp.copy(s.pos).project(camera); // top-centre
+        const sx = (tmp.x + 1) * innerWidth / 2;
+        const sy = (1 - tmp.y) * halfH;
+        const off = Math.abs(tmp.x) > 2 || Math.abs(tmp.y) > 2;
+        // Buttons/chatbox draw above the 3D pages, so hide them when a page is
+        // in front of them.
+        const centre = s.kind === "orb" ? tmp.clone() : tmp.clone().setY(tmp.y - (scale * pxH) / halfH / 2);
+        // Sample the centre (and, for buttons, the edges) — hide if any is
+        // behind a page.
+        const reach = s.kind === "orb" ? 1 : 0.9; // menus: sample just inside the edges
+        const rx = (reach * scale * s.pxW) / innerWidth, ry = (reach * scale * pxH) / innerHeight;
+        const samples = [[0, 0], [rx, 0], [-rx, 0], [0, ry], [0, -ry]];
+        const blocked = !off && samples.some(([dx, dy]) => {
+          const b = raycastTiles(centre.x + dx, centre.y + dy);
+          return b && b.depth < depth - 0.05;
+        });
+        // (A label's button stays visible and shows × while its pages are open.)
+        const hidden = off || blocked;
+        s.el.style.visibility = hidden ? "hidden" : "visible";
+        s.onScreen = !hidden;
+        s.depth = depth;
+        // Orbs are centred on their point; everything else hangs from it.
+        const dy = s.kind === "orb" ? -pxH / 2 : 0;
+        s.el.style.transform = `translate(${sx - s.pxW / 2}px, ${sy + dy * scale}px) scale(${scale})`;
+        s.el.style.zIndex = String(Math.max(1, Math.round(100000 - depth * 100)));
+      }
+    }
+
+    const inRect = (el, x, y) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+
+    function surfaceAt(x, y) {
+      let best = null;
+      for (const s of surfaces) {
+        if (!s.onScreen) continue;
+        if (s.kind === "orb") {
+          // Buttons are small from a distance: count the dot as "on" one within
+          // a slightly larger circle (at least 16px radius) around its centre.
+          const r = s.el.getBoundingClientRect();
+          const radius = Math.max(16, r.width * 0.7);
+          if (Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) > radius) continue;
+        } else if (!inRect(s.el, x, y)) continue;
+        if (!best || s.depth < best.depth) best = s;
+      }
+      return best;
+    }
+
+    // ---------- Crosshair ----------
+    let looking = false;
+    let target = null;    // surface under the dot
+    let hoverLink = null; // <a> inside a tile
+    let hoverAction = null; // { kind: "orb" | "back" | "close" | "chat" | "send" }
+    let hoverEl = null;
+    const crosshair = document.getElementById("crosshair");
+    const hint = document.getElementById("hint");
+    const typing = () => document.activeElement?.tagName === "INPUT";
+
+    // Ray from the eye through the dot → which page it hits, and where on that
+    // page (in the page's own CSS pixels).
+    const inv = new THREE.Matrix4(), o = new THREE.Vector3(), f = new THREE.Vector3();
+    const raycaster = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    // (nx, ny) is a screen point in normalised device coords; (0, 0) = the dot.
+    function raycastTiles(nx = 0, ny = 0) {
+      let best = null;
+      const open = items.find((it) => it.cluster);
+      if (!open || !uiVisible) return null;
+      raycaster.setFromCamera(ndc.set(nx, ny), camera);
+      const { origin, direction } = raycaster.ray;
+      for (const tl of open.cluster.tiles) {
+        inv.copy(tl.obj.matrixWorld).invert();
+        o.copy(origin).applyMatrix4(inv);
+        f.copy(origin).add(direction).applyMatrix4(inv).sub(o); // direction in tile space
+        if (Math.abs(f.z) < 1e-6) continue;
+        const k = -o.z / f.z;
+        if (k <= 0) continue;
+        const px = o.x + f.x * k + TILE_W / 2;
+        const py = TILE_H / 2 - (o.y + f.y * k);
+        if (px < 0 || px > TILE_W || py < 0 || py > TILE_H) continue;
+        const hit = new THREE.Vector3(o.x + f.x * k, o.y + f.y * k, 0).applyMatrix4(tl.obj.matrixWorld);
+        const depth = -hit.applyMatrix4(camera.matrixWorldInverse).z;
+        if (!best || depth < best.depth) best = { tile: tl, px, py, depth };
+      }
+      return best;
+    }
+
+    // Is (x, y) — in the tile's own CSS pixels — inside element n?
+    function within(n, x, y) {
+      let left = 0, top = 0;
+      for (let e = n; e && !e.classList?.contains("tile"); e = e.offsetParent) {
+        left += e.offsetLeft;
+        top += e.offsetTop;
+      }
+      // The orbiter is centred with translateX(-50%); offsetLeft ignores that.
+      const orb = n.closest(".orbiter");
+      if (orb) left -= orb.offsetWidth / 2;
+      return x >= left && x <= left + n.offsetWidth && y >= top && y <= top + n.offsetHeight;
+    }
+
+    function aim() {
+      const cx = innerWidth / 2, cy = innerHeight / 2;
+      let s = looking ? surfaceAt(cx, cy) : null;
+      const hit = looking ? raycastTiles() : null;
+      if (hit && (!s || hit.depth < s.depth)) s = hit.tile;
+      let link = null, action = null, el = null;
+      if (s?.kind === "tile") {
+        if (hit.py < ORBIT_H) {
+          // Close: the ✕, with a forgiving hit area around the top-right corner.
+          if (within(s.closeBtn, hit.px, hit.py) || (hit.px > TILE_W - 100 && hit.py < 84)) { action = "close"; el = s.closeBtn; }
+          else if (!s.backBtn.hidden && within(s.backBtn, hit.px, hit.py)) { action = "back"; el = s.backBtn; }
+        } else {
+          link = s.frame.contentDocument?.elementFromPoint(hit.px, hit.py - ORBIT_H)?.closest?.("a[href]") ?? null;
+        }
+      } else if (s?.kind === "orb") {
+        action = "orb"; el = s.el;
+      } else if (s?.kind === "menu") {
+        el = [...s.el.querySelectorAll("[data-action]")].find((n) => inRect(n, cx, cy)) ?? null;
+        action = el?.dataset.action ?? null;
+      }
+      if (link !== hoverLink) {
+        hoverLink?.classList.remove("xhair-hover");
+        hoverLink = link;
+        hoverLink?.classList.add("xhair-hover");
+      }
+      if (el !== hoverEl) {
+        hoverEl?.classList.remove("hover");
+        hoverEl = el;
+        hoverEl?.classList.add("hover");
+      }
+      if (s !== target) {
+        if (target?.kind === "tile") target.el.classList.remove("live");
+        target = s;
+      }
+      if (target?.kind === "tile") target.el.classList.toggle("live", target.open);
+      hoverAction = action;
+
+      crosshair.classList.toggle("hidden", typing());
+      crosshair.classList.toggle("on-link", !!(hoverLink || hoverAction));
+      const reading = target?.kind === "tile" && target.open;
+      hint.classList.toggle("bottom", !looking || reading);
+      hint.textContent =
+        typing() ? "Type a topic and press Enter · click the scene to look around again"
+        : !looking ? "Click to look around"
+        : action === "orb" ? (s.owner.cluster ? "Click to close pages" : `Click to open pages about “${s.owner.data.text}”`)
+        : action === "close" ? "Click to close"
+        : action === "chat" ? "Click to type"
+        : action === "send" ? "Click to send"
+        : action === "back" ? "Click to go back"
+        : hoverLink ? `Click: ${hoverLink.textContent.trim().slice(0, 60) || hoverLink.href}`
+        : reading ? "Scroll to read · aim at a link and click"
+        : "";
+    }
+
+    function follow(tile, a) {
+      const href = a.href; // absolute, thanks to <base>
+      if (a.getAttribute("href")?.startsWith("#")) {
+        tile.frame.contentDocument.getElementById(decodeURIComponent(a.hash.slice(1)))?.scrollIntoView();
+      } else if (oaId(href)) {
+        loadPage(tile, href); // follow the citation trail inside the screen
+      } else if (oaId(tile.current)) {
+        open(href, "_blank", "noopener"); // DOI / full text: the publisher's site
+      } else if (tile.current && !wikiTitle(tile.current) && /^https?:/.test(href) &&
+                 new URL(href).hostname === new URL(tile.current).hostname) {
+        loadPage(tile, href.split("#")[0]); // stay on the same trusted site inside the screen
+      } else if (wikiTitle(href) || (/^https:\/\//.test(href) && !wikiTitle(tile.current ?? "") && !/wikipedia\.org/.test(href))) {
+        loadPage(tile, href.split("#")[0]);
+      } else if (/^https?:\/\//.test(href)) {
+        open(href, "_blank", "noopener"); // e.g. Wikipedia "File:" pages
+      }
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (!looking) {
+        document.activeElement?.blur();
+        try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {}
+        return;
+      }
+      // Keep the browser from moving focus on this click (it would steal it
+      // from the chat box we focus below).
+      e.preventDefault();
+      const s = target;
+      if (hoverAction === "orb") s.owner.cluster ? closeCluster(s.owner) : openCluster(s.owner);
+      else if (hoverAction === "close") closeCluster(s.owner);
+      else if (hoverAction === "send") sendChat(s.owner);
+      else if (hoverAction === "chat") {
+        // Free the mouse so you can type; WASD pauses while the box has focus.
+        document.exitPointerLock();
+        s.input.focus();
+      } else if (hoverAction === "back" && s.history.length) loadPage(s, s.history.pop(), { push: false });
+      else if (hoverLink) follow(s, hoverLink);
+    });
+
+    // While looking, the wheel scrolls the open page (or chat) under the dot.
+    addEventListener("wheel", (e) => {
+      if (!looking || !target) return;
+      if (target.kind === "tile" && target.open) target.frame.contentWindow?.scrollBy(0, e.deltaY);
+      else if (target.kind === "menu") target.log.scrollBy(0, e.deltaY);
+      else return;
+      e.preventDefault();
+    }, { passive: false });
+
+    let lookDX = 0, lookDY = 0;
+    document.addEventListener("pointerlockchange", () => {
+      looking = document.pointerLockElement === canvas;
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!looking) return;
+      lookDX += e.movementX;
+      lookDY += e.movementY;
+    });
+
+    function applyLook() {
+      // Pick up any rotation Spark applied (arrow keys), then add the mouse.
+      const eul = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+      const yaw = eul.y - lookDX * 0.0022;
+      const pitch = THREE.MathUtils.clamp(eul.x - lookDY * 0.0022, -1.45, 1.45);
+      lookDX = lookDY = 0;
+      camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+    }
+
+    // ---------- Keys ----------
+    addEventListener("keydown", async (e) => {
+      if (typing() || e.repeat || e.metaKey || e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "t") {
+        if (document.pointerLockElement) document.exitPointerLock();
+        // Place a label 3m in front of wherever you're looking.
+        const text = prompt("Floating text:");
+        if (!text?.trim()) return;
+        const topic = prompt("Topic for its pages (optional):")?.trim();
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        const p = camera.position.clone().addScaledVector(dir, 3);
+        labels = [...labels, { text: text.trim(), position: p.toArray().map((n) => +n.toFixed(2)), size: 1,
+          color: "#ffffff", query: topic || text.trim() }];
+        saveLabels();
+        buildAll();
+      } else if (key === "u" && labels.length) {
+        labels = labels.slice(0, -1);
+        saveLabels();
+        buildAll();
+      } else if (key === "x" && openItem()) {
+        closeCluster(openItem());
+      } else if (key === "p") {
+        uiVisible = !uiVisible;
+      }
+    });
+
+    // Escape that is not releasing the mouse (or leaving a text field) closes
+    // the World Labs view, as it does the app's other full views.
+    let unlockedAt = 0;
+    document.addEventListener("pointerlockchange", () => { if (!document.pointerLockElement) unlockedAt = performance.now(); });
+    addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || typing() || document.pointerLockElement || performance.now() - unlockedAt < 400) return;
+      if (parent !== window) parent.postMessage({ type: "world:escape" }, location.origin);
+    });
+
+    buildAll();
+
+    // ---------- Frame loop ----------
+    renderer.setAnimationLoop((time) => {
+      controls.update(camera);
+      applyLook();
+      camera.updateMatrixWorld();
+      // Open screens stay where they are and turn to face you.
+      const open = openItem();
+      if (open) swivelGroup(open.cluster);
+      layout(time);
+      aim();
+      renderer.render(scene, camera);
+      cssRenderer.render(cssScene, camera);
+    });
+
+    // Hooks for automated tests (headless browsers can't lock the pointer).
+    const aimAt = (v) => {
+      const d = v.clone().sub(camera.position);
+      camera.quaternion.setFromEuler(new THREE.Euler(Math.atan2(d.y, Math.hypot(d.x, d.z)), Math.atan2(-d.x, -d.z), 0, "YXZ"));
+    };
+    window.__world = {
+      setLooking(v) { looking = v; },
+      // Aim at the centre of an element's on-screen box (iterate to converge).
+      aimAtEl(el) {
+        const r = el.getBoundingClientRect();
+        const focal = (innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        lookDX += Math.atan((r.left + r.width / 2 - innerWidth / 2) / focal) / 0.0022;
+        lookDY += Math.atan((r.top + r.height / 2 - innerHeight / 2) / focal) / 0.0022;
+      },
+      orb: (i) => items[i].orb.el,
+      // Where button i should be on screen (projected from its 3D point).
+      orbExpected(i) {
+        const p = items[i].orb.pos.clone().project(camera);
+        return { x: (p.x + 1) * innerWidth / 2, y: (1 - p.y) * innerHeight / 2 };
+      },
+      turn(dxPx, dyPx) { lookDX += dxPx; lookDY += dyPx; },
+      menuEl: (i, sel) => items[i].cluster?.menu.el.querySelector(sel),
+      tileEl: (i, k) => items[i].cluster?.tiles[k].el,
+      // Stand at the centre of the open sphere and look at page k.
+      standInSphere(i) { camera.position.copy(items[i].cluster.center); },
+      aimTile(i, k) { aimAt(items[i].cluster.tiles[k].obj.position); },
+      moveTo(x, y, z) { camera.position.set(x, y, z); },
+      lookAtPoint(x, y, z) { aimAt(new THREE.Vector3(x, y, z)); },
+      tileFacing(i) {
+        // Dot product of each page's facing direction with the direction to
+        // the sphere centre (1 = faces the centre exactly).
+        const c = items[i].cluster.center;
+        return items[i].cluster.tiles.map((t) => {
+          const n = new THREE.Vector3(0, 0, 1).applyQuaternion(t.obj.quaternion);
+          return +n.dot(c.clone().sub(t.obj.position).normalize()).toFixed(3);
+        });
+      },
+      // Angular box (azimuth/elevation, degrees) of each page as seen from the
+      // sphere centre — used to check pages don't overlap.
+      tileAngles(i, fromCamera = false) {
+        const c = fromCamera ? camera.position.clone() : items[i].cluster.center;
+        return items[i].cluster.tiles.map((t) => {
+          const az = [], el = [];
+          for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const p = new THREE.Vector3(x * TILE_W / 2, y * TILE_H / 2, 0).applyMatrix4(t.obj.matrixWorld).sub(c);
+            az.push(THREE.MathUtils.radToDeg(Math.atan2(p.x, -p.z)));
+            el.push(THREE.MathUtils.radToDeg(Math.atan2(p.y, Math.hypot(p.x, p.z))));
+          }
+          return { az: [Math.min(...az), Math.max(...az)], el: [Math.min(...el), Math.max(...el)] };
+        });
+      },
+      // 1 = page i faces the camera exactly.
+      tileFacingCamera(i) {
+        return items[i].cluster.tiles.map((t) => {
+          const n = new THREE.Vector3(0, 0, 1).applyQuaternion(t.obj.quaternion);
+          return +n.dot(camera.position.clone().sub(t.obj.position).normalize()).toFixed(3);
+        });
+      },
+      // Fraction of each page's corners that are inside the current view.
+      tilesInView(i) {
+        return items[i].cluster.tiles.map((t) => {
+          let inside = 0;
+          for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const p = new THREE.Vector3(x * TILE_W / 2, y * TILE_H / 2, 0).applyMatrix4(t.obj.matrixWorld).project(camera);
+            if (Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1 && p.z < 1) inside++;
+          }
+          return inside / 4;
+        });
+      },
+      groupCloseEl: (i) => items[i].cluster?.groupClose.el,
+      openOnScreen: (i, k, pageUrl) => loadPage(items[i].cluster.tiles[k], pageUrl),
+      groupSnapshot(i) {
+        const c = items[i].cluster;
+        const r = (v) => v.toArray().map((n) => +n.toFixed(2));
+        return { tiles: c.tiles.map((t) => r(t.obj.position)), menu: r(c.menu.pos), close: r(c.groupClose.pos) };
+      },
+      tileSources: (i) => items[i].cluster.tiles.map((t) =>
+        oaId(t.current ?? t.url) ? "paper" : wikiTitle(t.current ?? t.url ?? "") ? "encyclopedia" : "web"),
+      anchor: (i) => items[i].cluster.anchor.toArray().map((n) => +n.toFixed(3)),
+      tileQuats: (i) => items[i].cluster.tiles.map((t) => t.obj.quaternion.toArray().map((n) => +n.toFixed(4))),
+      tilePos: (i) => items[i].cluster.tiles.map((t) => t.obj.position.toArray().map((n) => +n.toFixed(2))),
+      state: () => ({
+        looking, target: target?.kind ?? null, action: hoverAction, link: hoverLink?.textContent.trim() ?? null,
+        clusters: items.filter((it) => it.cluster).map((it) => it.data.text),
+        tiles: (items.find((it) => it.cluster)?.cluster.tiles ?? []).map((t) => ({ open: t.open, url: t.url && niceTitle(t.url), current: t.current && niceTitle(t.current) })),
+        scroll: target?.kind === "tile" ? target.frame.contentWindow?.scrollY : null,
+        typing: typing(),
+        chat: [...(items.find((it) => it.cluster)?.cluster.menu.log.children ?? [])].map((n) => n.textContent.slice(0, 80)),
+      }),
+    };
+  </script>
+</body>
+</html>

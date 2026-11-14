@@ -6,6 +6,9 @@ import { __setSeedForTests, type SeedChat } from "@/lib/agent-store";
 
 // the chat route writes researched turns to the vault: never the repo's own in tests
 process.env.VAULT_DIR = mkdtempSync(join(tmpdir(), "agent-research-vault-"));
+// no World Labs worlds unless a test injects its own service (src/server/worlds/service.ts)
+process.env.WORLDS_DISABLED = "1";
+process.env.WORLDS_DIR = mkdtempSync(join(tmpdir(), "agent-research-worlds-"));
 
 /**
  * Sample conversations for the AI tests. The app itself starts with no chats;

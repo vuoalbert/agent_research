@@ -46,3 +46,8 @@ out/
 
 # Visualize studio: the anatomy skill copy and job folders (npm run setup:visualize)
 /.visualize/
+
+# World Labs worlds: one record per chat (the splats stream from the World Labs CDN)
+/.worlds/
+# local test splats for the World Labs viewer (never committed)
+/public/dev-worlds/

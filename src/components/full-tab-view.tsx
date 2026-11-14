@@ -7,6 +7,7 @@ import { useEffect, useRef } from "react";
 import { ForceGraphView } from "@/components/force-graph-view";
 import { useTabView } from "@/components/tab-view-context";
 import { VisualizeView } from "@/components/visualize/visualize-view";
+import { WorldView } from "@/components/worlds/world-view";
 import { Button } from "@/components/ui/button";
 import { exitDuration, timing, useReduced } from "@/lib/motion-tokens";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,8 @@ import { cn } from "@/lib/utils";
  * composer. The page keeps the cards' 8px gutters right and below, and their
  * 8px radius on all four corners.
  *
- * World Labs is a blank white canvas for now; Force graph fills its page with
+ * World Labs shows the active chat's walkable World Labs world
+ * (src/components/worlds/); Force graph fills its page with
  * a 3D force graph (src/components/force-graph-3d.tsx), and Visualize with the
  * figures Claude is building or has built (src/components/visualize/). The
  * Force graph has a chatbox to ask it questions (src/components/graph-chat.tsx).
@@ -100,6 +102,7 @@ export function FullTabView({ className }: { className?: string }) {
                   the slide-out finishes */}
               {view === "Force graph" && <ForceGraphView className="absolute inset-0" />}
               {view === "Visualize" && <VisualizeView className="absolute inset-0" />}
+              {view === "World Labs" && <WorldView className="absolute inset-0 size-full" />}
               <Button
                 ref={backRef}
                 variant="ghost"

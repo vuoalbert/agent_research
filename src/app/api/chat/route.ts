@@ -8,6 +8,7 @@ import { SUBAGENTS_TOOL_ID, createSubagentsTool } from "./subagents";
 import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type PageSeen, type Source } from "./tavily";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
 import { VISUALIZE_PROMPT, VISUALIZE_SERVER, VISUALIZE_TOOL_ID, createVisualizeTurn } from "./visualize-tool";
+import { createWorldTurn } from "./world-turn";
 
 const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
 
@@ -39,6 +40,8 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *                            data: {"id","name":"Visualize","action":"visualize","query","jobId","status":"running"}
  *                                  (then "done" once the job is queued; see visualize-tool.ts —
  *                                  a research turn always ends with exactly one)
+ *                            data: {"id","name":"World Labs","action":"world","query","chatId","status":"running"} → {"id","status":"done"}
+ *                                  (a chat's FIRST research turn starts its one World Labs world; see world-turn.ts)
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -149,8 +152,19 @@ export async function POST(request: Request) {
       // what this turn's research found, for the vault once the turn is over
       const turn = createTurnRecorder({ chatId, question: turns[turns.length - 1].content, knownSources: chatSources });
       let answer = "";
+      // a chat's first research turn starts its World Labs world (world-turn.ts)
+      const researchTools = [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID];
+      const world = createWorldTurn({
+        chatId,
+        researchTools,
+        knownSources: chatSources,
+        onActivity: (activity) => {
+          if (!abort.signal.aborted) send(controller, "tool", activity);
+        },
+      });
       const report = (activity: unknown) => {
         turn.recordActivity(activity);
+        world.recordActivity(activity);
         if (!abort.signal.aborted) send(controller, "tool", activity);
       };
       // the sources cross_reference checks: the chat's, then this request's finds
@@ -159,7 +173,7 @@ export async function POST(request: Request) {
       const visualize = createVisualizeTurn({
         onActivity: report,
         // a deploy_subagents call is research too: its result is the subagents' findings
-        researchTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID],
+        researchTools,
         crossrefTool: CROSSREF_TOOL_ID,
       });
       // every page a search or read returned — the chat's own or a subagent's —
@@ -167,6 +181,7 @@ export async function POST(request: Request) {
       const onPages = (pages: PageSeen[]) => {
         log.recordPages(pages);
         turn.recordPages(pages);
+        world.recordPages(pages);
       };
       const question = turns[turns.length - 1].content;
       try {
@@ -215,6 +230,7 @@ export async function POST(request: Request) {
         for await (const message of run) {
           if (abort.signal.aborted) break;
           visualize.observe(message);
+          world.observe(message);
           // Text arrives as Messages API streaming events wrapped in the SDK's
           // `stream_event` frame — not as a top-level delta message.
           if (message.type === "stream_event") {
@@ -243,6 +259,8 @@ export async function POST(request: Request) {
 
         // a research turn Claude did not visualize gets its figure queued here
         if (!abort.signal.aborted) visualize.finish(question);
+        // the chat's first research turn starts its world, in the background
+        if (!abort.signal.aborted) world.finish(question, answer);
         send(controller, "done", {});
         controller.close();
         // after the stream: the reader never waits on the vault, and a failed
