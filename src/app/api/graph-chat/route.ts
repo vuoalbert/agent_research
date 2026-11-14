@@ -8,7 +8,7 @@ import { askClaude, buildPrompt, parseRequest, resolveAnswer } from "./navigate"
  * machine's own Claude login — no API key), never prerendered.
  *
  * Request:  { question: string,
- *             graph: { nodes: { id, kind: "chat"|"search"|"page", label, degree }[],
+ *             graph: { nodes: { id, kind: "chat"|"subagent"|"search"|"page", label, degree }[],
  *                      links: { source, target, kind }[] } }
  *           capped at 600 nodes / 2000 links, labels cut to 120 chars
  * Response: 200 { reply: string, focus: string | null, highlight: string[] }

@@ -4,7 +4,8 @@ import { createTurnRecorder } from "@/server/vault/turn";
 
 import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
 import { parseSources } from "./sources";
-import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type Source } from "./tavily";
+import { SUBAGENTS_TOOL_ID, createSubagentsTool } from "./subagents";
+import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type PageSeen, type Source } from "./tavily";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
 import { VISUALIZE_PROMPT, VISUALIZE_SERVER, VISUALIZE_TOOL_ID, createVisualizeTurn } from "./visualize-tool";
 
@@ -31,6 +32,10 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *                            data: {"id","name":"Cross-reference","action":"crossref","query","status":"running"}
  *                              → {"id","status":"done","crossref":{"claims","relations"}}
  *                            data: {"id","name":"Vault","action":"vault","op":"search"|"read"|"write","query","status":"running"}
+ *                            data: {"id","name":"Subagents","action":"subagents","query","status":"running"|"done",
+ *                                   "subagents":[{"id","title","shape","status","line","startedAt","finishedAt"}]}
+ *                                  (re-sent with the same id as each subagent moves on; see subagents.ts)
+ *                            data: {…any of the rows above…, "parentId","agentId"}  a subagent's own call
  *                            data: {"id","name":"Visualize","action":"visualize","query","jobId","status":"running"}
  *                                  (then "done" once the job is queued; see visualize-tool.ts —
  *                                  a research turn always ends with exactly one)
@@ -55,22 +60,23 @@ export const dynamic = "force-dynamic";
 const MODEL = "claude-opus-5-5";
 const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
-/** enough for a few searches, a couple of reads, and the answer after them */
+/** enough for the vault, the subagents, a gap-filling search or read, the cross-reference and the answer */
 const MAX_AGENT_TURNS = 16;
 const SYSTEM_PROMPT = [
   "You are Agent Research, an AI assistant. Be concise.",
   "",
   "When a question needs current or external facts, research it:",
-  "1. Search with tavily_search.",
-  "2. Pick 2-4 independent sources, preferably primary or official ones, and read them with tavily_extract.",
+  "1. Split the question into 3-4 complementary angles (e.g. the technology, the companies, the numbers, the open problems) and call deploy_subagents once, one subagent per angle,",
+  "   each with a short title and a self-contained task. They search with tavily_search and read pages with tavily_extract in parallel, and each returns its findings with source URLs.",
+  "2. Compare their findings: where they agree, where they disagree (which source says what), and what is missing. Fill a real gap yourself with tavily_search and tavily_extract, preferring primary or official sources.",
   "3. Cross-reference the key facts (numbers, dates, names, claims) across at least two sources.",
   "4. Say where the sources agree, and flag any disagreement explicitly: which source says what.",
   "5. When sources conflict, prefer the primary or official one and say why.",
   "After gathering and reading sources for a factual question, call cross_reference once to check all sources against each other before writing.",
   "Report the agreements and conflicts its result shows.",
   "Cite inline by source name with a link, e.g. [Microsoft](https://news.microsoft.com/...).",
-  "Do not mention how many sources you read or searches you ran.",
-  "Keep the answer natural and to the point. Questions that don't need outside facts get a direct answer, no research.",
+  "Do not mention how many sources you read, searches you ran or subagents you deployed.",
+  "Keep the answer natural and to the point. Questions that don't need outside facts get a direct answer, no research and no subagents.",
   "",
   "You have a research vault: Markdown notes kept from earlier research (Research answers, Sources, cross-referenced Claims).",
   "Before researching the web, call vault_search for the topic. If the vault already covers the question well and it is not time-sensitive,",
@@ -152,9 +158,17 @@ export async function POST(request: Request) {
       // every research turn ends with one figure (visualize-tool.ts)
       const visualize = createVisualizeTurn({
         onActivity: report,
-        researchTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID],
+        // a deploy_subagents call is research too: its result is the subagents' findings
+        researchTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID],
         crossrefTool: CROSSREF_TOOL_ID,
       });
+      // every page a search or read returned — the chat's own or a subagent's —
+      // goes to cross_reference's log and the vault recorder
+      const onPages = (pages: PageSeen[]) => {
+        log.recordPages(pages);
+        turn.recordPages(pages);
+      };
+      const question = turns[turns.length - 1].content;
       try {
         const run = query({
           prompt: buildPrompt(turns),
@@ -171,18 +185,23 @@ export async function POST(request: Request) {
             settingSources: [],
             mcpServers: {
               [TAVILY_SERVER]: createTavilyServer(report, {
-                onPages: (pages) => {
-                  log.recordPages(pages);
-                  turn.recordPages(pages);
-                },
+                onPages,
                 tools: [
                   createCrossReferenceTool({ log, onActivity: report, signal: abort.signal }),
                   ...createVaultTools({ onActivity: report }),
+                  createSubagentsTool({ onActivity: report, onPages, signal: abort.signal, question }),
                 ],
               }),
               [VISUALIZE_SERVER]: visualize.server,
             },
-            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, ...VAULT_TOOL_IDS, VISUALIZE_TOOL_ID],
+            allowedTools: [
+              TAVILY_TOOL_ID,
+              EXTRACT_TOOL_ID,
+              CROSSREF_TOOL_ID,
+              ...VAULT_TOOL_IDS,
+              SUBAGENTS_TOOL_ID,
+              VISUALIZE_TOOL_ID,
+            ],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,
@@ -223,7 +242,7 @@ export async function POST(request: Request) {
         }
 
         // a research turn Claude did not visualize gets its figure queued here
-        if (!abort.signal.aborted) visualize.finish(turns[turns.length - 1].content);
+        if (!abort.signal.aborted) visualize.finish(question);
         send(controller, "done", {});
         controller.close();
         // after the stream: the reader never waits on the vault, and a failed
