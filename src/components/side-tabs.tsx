@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { KnowledgeBase } from "@/components/knowledge-base";
+import { References } from "@/components/references";
 
 /**
  * SideTabs — five labelled handles hanging inward from the chat card's right
@@ -461,6 +462,8 @@ function SideTabPanel({
     >
       {label === "Knowledge base" ? (
         <KnowledgeBase titleId={`${id}-title`} />
+      ) : label === "References" ? (
+        <References titleId={`${id}-title`} open={open} />
       ) : (
         <h2 id={`${id}-title`} className="text-[13px] leading-5 font-semibold text-plane-ink">
           {label}
