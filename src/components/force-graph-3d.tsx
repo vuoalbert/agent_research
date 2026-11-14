@@ -9,10 +9,16 @@ import {
   PAGE_FAR,
   PANEL_SCALE,
   checkEmbeddable,
+  closePage,
+  createDeck,
   createPanel,
   fitDistance,
-  pickPage,
+  openPages,
+  pinPage,
+  touchPage,
+  updateNearby,
   type PageCandidate,
+  type Panel,
 } from "@/components/graph-page-panel";
 import { useAgentStore } from "@/lib/agent-store";
 import { CROSSREF_LINK_STYLE } from "@/lib/crossref-links";
@@ -38,12 +44,14 @@ import { cn } from "@/lib/utils";
  * place. Pages are one node per page across all chats, so chats that share a
  * source meet at it.
  *
- * Get the camera close to a page — scroll in, or click it to fly there — and
- * the page itself opens at the node, live, facing the camera: an <iframe> in a
- * CSS3DRenderer layer over the WebGL canvas. Only the nearest page in view
- * gets one, and it is unmounted again on the way out. Sites that forbid being
- * framed (asked of `/api/embed-check`) get a card that opens them in a new
- * tab instead. Nothing is captured or stored.
+ * Pages open at their nodes, live, facing the camera: an <iframe> in a
+ * CSS3DRenderer layer over the WebGL canvas. Clicking a page pins it open
+ * (and flies there); getting the camera close opens the nearest pages too, and
+ * they unmount again on the way out. At most MAX_PAGES are open at once — see
+ * the `Deck` in graph-page-panel. With the pointer over a page, the page takes
+ * all input (scroll, click, type) and the graph's controls stand down. Sites
+ * that forbid being framed (asked of `/api/embed-check`) get a card that opens
+ * them in a new tab instead. Nothing is captured or stored.
  *
  * It fills its parent and follows its size with a ResizeObserver. Unmounting
  * removes the panel, calls the library's `_destructor()` (animation loop,
@@ -63,6 +71,8 @@ export type LinkStyle = {
   width: number;
   /** particles drifting along the link, source → target (none under reduced motion) */
   particles: number;
+  /** drawn fully opaque, not at the graph's shared link opacity */
+  opaque?: boolean;
   particleWidth?: number;
   particleSpeed?: number;
 };
@@ -70,8 +80,9 @@ export type LinkStyle = {
  * One entry per link kind — a new kind (say, pages that agree or conflict)
  * adds its row here. Greys for the research trail; the one accent, a muted
  * blue, for pages read side by side. Red is for `conflicts` only: pages that
- * contradict each other, with a few slow particles drifting along the link.
- * `agrees` is solid grey, its width per link (more shared claims, wider).
+ * contradict each other, a solid, fully opaque red link (`opaque`), nothing
+ * drifting along it. `agrees` is solid grey, its width per link (more shared
+ * claims, wider).
  */
 export const LINK_STYLE: Record<ResearchLinkKind, LinkStyle> = {
   asked: { color: "#A3A6AB", width: 0.6, particles: 0 },
@@ -80,13 +91,7 @@ export const LINK_STYLE: Record<ResearchLinkKind, LinkStyle> = {
   read: { color: "#A3A6AB", width: 0.35, particles: 0 },
   "cross-ref": { color: "rgba(107, 138, 253, 0.7)", width: 0.7, particles: 0 },
   agrees: { color: CROSSREF_LINK_STYLE.agrees.color, width: CROSSREF_LINK_STYLE.agrees.width, particles: 0 },
-  conflicts: {
-    color: CROSSREF_LINK_STYLE.conflicts.color,
-    width: CROSSREF_LINK_STYLE.conflicts.width,
-    particles: CROSSREF_LINK_STYLE.conflicts.particles,
-    particleWidth: CROSSREF_LINK_STYLE.conflicts.particleWidth,
-    particleSpeed: CROSSREF_LINK_STYLE.conflicts.particleSpeed,
-  },
+  conflicts: { color: CROSSREF_LINK_STYLE.conflicts.color, width: CROSSREF_LINK_STYLE.conflicts.width, particles: 0, opaque: true },
 };
 const linkStyle = (link: object) => LINK_STYLE[(link as { kind: ResearchLinkKind }).kind];
 /** a link's own width (agrees grows with its claims), else its kind's */
@@ -95,6 +100,8 @@ const linkWidthOf = (link: object) => (link as ResearchLink).width ?? linkStyle(
  *  backs further out if a page would still be within PAGE_FAR */
 const FLY_DISTANCE: Record<Exclude<ResearchNodeKind, "page">, number> = { chat: 320, search: 260 };
 const FLY_MS = 800;
+/** a page nearer the camera's plane than this (world units) is not drawn */
+const MIN_DEPTH = 12;
 const KIND_LABEL: Record<ResearchNodeKind, string> = { chat: "Chat", search: "Search", page: "Page" };
 export const EMPTY_TEXT = "Ask Claude to research something — sources show up here as a graph";
 
@@ -178,6 +185,8 @@ export function ForceGraph3D({ className }: { className?: string }) {
       import("three/examples/jsm/renderers/CSS3DRenderer.js"),
     ]).then(([{ default: ForceGraph }, THREE, { CSS3DRenderer, CSS3DSprite }]) => {
       if (cancelled) return;
+      const ahead = new THREE.Vector3();
+      const opaqueMaterials = new Map<string, InstanceType<typeof THREE.MeshLambertMaterial>>();
       const css = new CSS3DRenderer();
       css.domElement.dataset.css3d = "";
       /* the layer lets everything through to the canvas's controls; only a
@@ -197,6 +206,14 @@ export function ForceGraph3D({ className }: { className?: string }) {
         .linkColor((link) => linkStyle(link).color)
         .linkWidth(linkWidthOf)
         .linkOpacity(0.9)
+        /* opaque kinds (conflicts) get their own solid material */
+        .linkMaterial((link) => {
+          const style = linkStyle(link);
+          if (!style.opaque) return null;
+          let material = opaqueMaterials.get(style.color);
+          if (!material) opaqueMaterials.set(style.color, (material = new THREE.MeshLambertMaterial({ color: style.color })));
+          return material;
+        })
         /* agrees / conflicts: the claim(s) with ✓ / ✗ hosts, escaped upstream */
         .linkLabel((link) => (link as ResearchLink).label ?? "")
         .linkDirectionalParticles((link) => (reduceRef.current ? 0 : linkStyle(link).particles))
@@ -231,89 +248,212 @@ export function ForceGraph3D({ className }: { className?: string }) {
         }
         const ms = reduceRef.current ? 0 : FLY_MS;
         graph.cameraPosition({ x: to.x, y: to.y, z: to.z }, { x: at.x, y: at.y, z: at.z }, ms);
+        /* the flight only aims the controls while they are enabled; a page
+           hovered mid-flight disables them, and re-enabling would then snap
+           the view back to the old target — so aim them now */
+        (graph.controls() as { target?: { set?: (x: number, y: number, z: number) => void } }).target?.set?.(at.x, at.y, at.z);
         return ms;
       };
       const pageFit = () => {
         const camera = graph.camera() as InstanceType<typeof THREE.PerspectiveCamera>;
         return fitDistance(camera.fov, camera.aspect);
       };
-      /** a clicked page: it gets the panel over any nearer neighbour */
-      let pinned: { id: string; until: number } | null = null;
-      graph.onNodeClick((raw) => {
-        const node = raw as GraphNode;
-        const ms = node.kind === "page" ? flyTo(node, pageFit()) : flyTo(node, FLY_DISTANCE[node.kind], true);
-        pinned = node.kind === "page" ? { id: node.id, until: performance.now() + ms + 250 } : null;
-      });
 
-      /* ------------------------------------------ the page at the camera */
-      let open: { id: string; sprite: CSS3DSprite } | null = null;
-      const unmount = () => {
+      /* ---------------------------------------------- the pages, live */
+      const deck = createDeck();
+      /** no page opens by proximity until a flight has landed */
+      let flyingUntil = 0;
+      const mounted = new Map<string, { sprite: CSS3DSprite; panel: Panel }>();
+      const byId = new Map<string, GraphNode>();
+
+      /* the panel under the pointer takes all input — wheel, clicks, drags,
+         typing — so the camera controls and node picking stand down until
+         the pointer leaves it */
+      const controls = graph.controls() as { enabled?: boolean; target?: InstanceType<typeof THREE.Vector3> };
+      let liveId: string | null = null;
+      /** while disabled the controls stop following the camera (a flight
+          aims only enabled controls): before they take over again, aim them
+          along the current line of sight, at the same distance — or they
+          would snap the view to wherever they last pointed */
+      const aimControls = () => {
+        if (!controls.target || controls.enabled) return;
+        const camera = graph.camera();
+        const reach = Math.max(1, camera.position.distanceTo(controls.target));
+        camera.getWorldDirection(ahead);
+        controls.target.copy(camera.position).addScaledVector(ahead, reach);
+      };
+      const setLive = (id: string | null) => {
+        if (id === liveId) return;
+        if (liveId) mounted.get(liveId)?.panel.setLive(false);
+        liveId = id;
+        if (id) mounted.get(id)?.panel.setLive(true);
+        if (id === null) aimControls();
+        controls.enabled = id === null;
+        graph.enablePointerInteraction(id === null);
+        if (id) container.dataset.livePage = id;
+        else delete container.dataset.livePage;
+      };
+      /* a backstop for a missed pointerleave (say, leaving straight out of an
+         iframe): any pointer move over the graph itself ends the hover */
+      let pointer: { x: number; y: number } | null = null;
+      /* a drag on the graph is under way: the controls must not be disabled
+         mid-gesture — TrackballControls then skips its pointerup and keeps a
+         stale pointer — so hover waits for the release */
+      let pressed = false;
+      const onGraphDown = (event: PointerEvent) => {
+        if (!(event.target as Element | null)?.closest?.("[data-graph-panel]")) pressed = true;
+      };
+      /* after the controls' own pointerup has run */
+      const onRelease = () => setTimeout(() => (pressed = false), 0);
+      const onGraphPointer = (event: PointerEvent) => {
+        pointer = { x: event.clientX, y: event.clientY };
+        const over = (event.target as Element | null)?.closest?.("[data-graph-panel]");
+        if (!over && liveId) setLive(null);
+      };
+      const onGraphLeave = () => {
+        pointer = null;
+      };
+      container.addEventListener("pointermove", onGraphPointer, { capture: true });
+      container.addEventListener("pointerover", onGraphPointer, { capture: true });
+      container.addEventListener("pointerleave", onGraphLeave);
+      container.addEventListener("pointerdown", onGraphDown, { capture: true });
+      window.addEventListener("pointerup", onRelease);
+      window.addEventListener("pointercancel", onRelease);
+      /** a panel that opened (or flew in) under a resting pointer gets no
+          pointerenter — the browser hands input to the iframe directly — so
+          look under the pointer while nothing is live */
+      const panelUnderPointer = () => {
+        if (!pointer || liveId || pressed || mounted.size === 0 || typeof document.elementFromPoint !== "function") return;
+        const over = document.elementFromPoint(pointer.x, pointer.y)?.closest<HTMLElement>("[data-graph-panel]");
+        const hit = over && [...mounted].find(([, open]) => open.panel.element === over);
+        if (hit) setLive(hit[0]);
+      };
+
+      const unmount = (id: string) => {
+        const open = mounted.get(id);
         if (!open) return;
+        if (liveId === id) setLive(null);
         /* removal fires the object's "removed" event, which takes its element
            — and the iframe with it — out of the DOM */
         graph.scene().remove(open.sprite);
-        open = null;
-        delete container.dataset.page;
+        mounted.delete(id);
       };
       const mount = (node: GraphNode) => {
-        unmount();
         const page = { id: node.id, url: node.url!, title: node.label, host: node.host ?? "" };
         const panel = createPanel(page, {
-          /* back out until no page is in reach, so this one closes and no
-             other opens in its place */
           onClose: () => {
-            pinned = null;
-            flyTo(node, FLY_DISTANCE.search, true);
+            const only = mounted.size === 1;
+            closePage(deck, node.id);
+            sync();
+            /* the last page: back out until no page is in reach, so no other
+               opens in its place */
+            if (only) flyingUntil = performance.now() + flyTo(node, FLY_DISTANCE.search, true) + 250;
           },
-          forwardWheel: (event) =>
-            graph.renderer().domElement.dispatchEvent(new WheelEvent("wheel", event)),
+          /* over the chrome the graph still zooms: let the controls take this one wheel */
+          forwardWheel: (event) => {
+            const was = controls.enabled;
+            controls.enabled = true;
+            graph.renderer().domElement.dispatchEvent(new WheelEvent("wheel", event));
+            controls.enabled = was;
+          },
+          onHover: (over) => {
+            if (over && !pressed) setLive(node.id);
+            else if (liveId === node.id) setLive(null);
+          },
         });
+        panel.element.addEventListener("pointerdown", () => touchPage(deck, node.id, performance.now()));
         const sprite = new CSS3DSprite(panel.element);
         sprite.scale.setScalar(PANEL_SCALE);
         sprite.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
         graph.scene().add(sprite);
-        open = { id: node.id, sprite };
-        container.dataset.page = page.url;
+        mounted.set(node.id, { sprite, panel });
         void checkEmbeddable(page.url).then((answer) => {
-          if (open?.sprite !== sprite) return;
+          if (mounted.get(node.id)?.sprite !== sprite) return;
           panel.setState(answer.embeddable ? "page" : "card", answer.reason);
         });
       };
-      closePanel = unmount;
+      /** mount what the deck holds open, unmount the rest */
+      const sync = () => {
+        const want = openPages(deck);
+        for (const id of [...mounted.keys()]) if (!want.includes(id)) unmount(id);
+        for (const id of want) {
+          const node = byId.get(id);
+          if (node && !mounted.has(id)) mount(node);
+        }
+        /* what is open, for checks from outside: urls, space-separated */
+        const urls = want.flatMap((id) => (mounted.has(id) ? [byId.get(id)!.url!] : [])).join(" ");
+        if ((container.dataset.pages ?? "") !== urls) {
+          if (urls) container.dataset.pages = urls;
+          else delete container.dataset.pages;
+        }
+        const pinned = deck.pins.filter((id) => mounted.has(id)).map((id) => byId.get(id)!.url!).join(" ");
+        if ((container.dataset.pinned ?? "") !== pinned) {
+          if (pinned) container.dataset.pinned = pinned;
+          else delete container.dataset.pinned;
+        }
+      };
+      closePanel = () => {
+        for (const id of [...mounted.keys()]) unmount(id);
+        container.removeEventListener("pointermove", onGraphPointer, { capture: true });
+        container.removeEventListener("pointerover", onGraphPointer, { capture: true });
+        container.removeEventListener("pointerleave", onGraphLeave);
+        container.removeEventListener("pointerdown", onGraphDown, { capture: true });
+        window.removeEventListener("pointerup", onRelease);
+        window.removeEventListener("pointercancel", onRelease);
+      };
+
+      const readPages = () => {
+        byId.clear();
+        for (const n of live?.signature ? (graph.graphData().nodes as GraphNode[]) : []) {
+          if (n.kind === "page" && n.url && n.x !== undefined) byId.set(n.id, n);
+        }
+      };
+      /** a clicked page is pinned open at once; the camera flies to frame it */
+      graph.onNodeClick((raw) => {
+        const node = raw as GraphNode;
+        const ms = node.kind === "page" ? flyTo(node, pageFit()) : flyTo(node, FLY_DISTANCE[node.kind], true);
+        flyingUntil = performance.now() + ms + 250;
+        if (node.kind === "page" && node.url) {
+          readPages();
+          pinPage(deck, node.id);
+          sync();
+        }
+      });
 
       const frustum = new THREE.Frustum();
       const matrix = new THREE.Matrix4();
       const point = new THREE.Vector3();
       const candidates: PageCandidate[] = [];
-      const byId = new Map<string, GraphNode>();
       const tick = () => {
         frame = requestAnimationFrame(tick);
-        byId.clear();
-        for (const node of live?.signature ? (graph.graphData().nodes as GraphNode[]) : []) {
-          if (node.kind === "page" && node.url && node.x !== undefined) byId.set(node.id, node);
-        }
-        if (byId.size === 0 && !open) return;
+        readPages();
+        if (byId.size === 0 && mounted.size === 0) return;
         const camera = graph.camera();
         camera.updateMatrixWorld();
         matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(matrix);
         candidates.length = 0;
-        for (const node of byId.values()) {
-          point.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
-          candidates.push({ id: node.id, distance: point.distanceTo(camera.position), inView: frustum.containsPoint(point) });
+        for (const n of byId.values()) {
+          point.set(n.x ?? 0, n.y ?? 0, n.z ?? 0);
+          candidates.push({ id: n.id, distance: point.distanceTo(camera.position), inView: frustum.containsPoint(point) });
         }
-        const current = open?.id ?? null;
-        const next = pickPage(candidates, current, pinned?.id ?? null);
-        /* unpin once the pinned page has been left behind, or the flight to
-           it ended (or was interrupted) without reaching it */
-        if (pinned && next !== pinned.id && (current === pinned.id || performance.now() > pinned.until)) pinned = null;
-        if (next !== current) {
-          if (next) mount(byId.get(next)!);
-          else unmount();
+        const now = performance.now();
+        updateNearby(deck, candidates, now, now > flyingUntil);
+        sync();
+        /* follow the nodes while the layout still moves them; a page at or
+           behind the camera is hidden — projected through the viewer it
+           would blow up across the view (and mis-route input to its iframe) */
+        camera.getWorldDirection(ahead);
+        for (const [id, open] of mounted) {
+          const n = byId.get(id);
+          if (n) open.sprite.position.set(n.x ?? 0, n.y ?? 0, n.z ?? 0);
+          const inFront = point.copy(open.sprite.position).sub(camera.position).dot(ahead) > MIN_DEPTH;
+          if (open.sprite.visible !== inFront) {
+            open.sprite.visible = inFront;
+            if (!inFront && liveId === id) setLive(null);
+          }
         }
-        /* follow the node while the layout still moves it */
-        const node = open && byId.get(open.id);
-        if (open && node) open.sprite.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+        panelUnderPointer();
       };
       if (typeof requestAnimationFrame !== "undefined") frame = requestAnimationFrame(tick);
 

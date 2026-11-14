@@ -11,8 +11,8 @@ import { hostOf, sourceKey } from "./source-key";
  *        .linkDirectionalParticleSpeed("particleSpeed")
  *        .linkDirectionalParticleColor("color")
  *
- * - **conflicts** are the only red in the graph: a red link with a few slow
- *   drifting particles (none under reduced motion);
+ * - **conflicts** are the only red in the graph: a solid, opaque red link,
+ *   a little wider than an agreement, with nothing drifting along it;
  * - **agrees** are solid grey links, wider the more claims the two pages share.
  *
  * Hovering a link shows its claims with the ✓ / ✗ hosts (`label`, HTML).
@@ -28,11 +28,9 @@ export const CROSSREF_LINK_STYLE = {
     maxWidth: 3,
   },
   conflicts: {
+    /* the knowledge base's ✗ red */
     color: "#DC2626",
     width: 1.2,
-    particles: 3,
-    particleWidth: 2,
-    particleSpeed: 0.004,
   },
 } as const;
 
@@ -77,8 +75,7 @@ export function crossrefLinks(
   {
     nodeId = sourceKey,
     hasNode,
-    reducedMotion = false,
-  }: { nodeId?: (url: string) => string; hasNode?: (id: string) => boolean; reducedMotion?: boolean } = {},
+  }: { nodeId?: (url: string) => string; hasNode?: (id: string) => boolean } = {},
 ): CrossrefLink[] {
   const claimsById = new Map(crossref.claims.map((claim) => [claim.id, claim]));
   const links: CrossrefLink[] = [];
@@ -99,9 +96,9 @@ export function crossrefLinks(
         claims,
         color: style.color,
         width: style.width,
-        particles: reducedMotion ? 0 : style.particles,
-        particleWidth: style.particleWidth,
-        particleSpeed: style.particleSpeed,
+        particles: 0,
+        particleWidth: 0,
+        particleSpeed: 0,
         label,
       });
     } else {

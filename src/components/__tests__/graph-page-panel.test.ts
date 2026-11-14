@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   FIT_FILL,
+  MAX_PAGES,
   PAGE_FAR,
   PAGE_NEAR,
   PANEL_HEIGHT,
@@ -9,40 +10,103 @@ import {
   PANEL_WIDTH,
   __clearEmbedAnswers,
   checkEmbeddable,
+  closePage,
+  createDeck,
   createPanel,
   fitDistance,
-  pickPage,
+  openPages,
+  pinPage,
+  touchPage,
+  updateNearby,
 } from "@/components/graph-page-panel";
 
 const at = (id: string, distance: number, inView = true) => ({ id, distance, inView });
 
-describe("pickPage", () => {
-  it("opens the nearest page in view within PAGE_NEAR", () => {
-    expect(pickPage([at("a", PAGE_NEAR + 1)], null)).toBeNull();
-    expect(pickPage([at("a", 120), at("b", 90), at("c", 40, false)], null)).toBe("b");
+describe("the deck of open pages", () => {
+  it("opens the nearest unpinned pages in view within PAGE_NEAR, and keeps them to PAGE_FAR", () => {
+    const deck = createDeck();
+    updateNearby(deck, [at("a", PAGE_NEAR + 1), at("b", 40), at("c", 20, false)], 0);
+    expect(openPages(deck)).toEqual(["b"]);
+    updateNearby(deck, [at("b", (PAGE_NEAR + PAGE_FAR) / 2)], 1);
+    expect(openPages(deck)).toEqual(["b"]);
+    updateNearby(deck, [at("b", PAGE_FAR + 1)], 2);
+    expect(openPages(deck)).toEqual([]);
+    updateNearby(deck, [at("b", 50, false)], 3);
+    expect(openPages(deck)).toEqual([]);
   });
 
-  it("keeps the open page until it passes PAGE_FAR or leaves the view", () => {
-    expect(pickPage([at("a", (PAGE_NEAR + PAGE_FAR) / 2)], "a")).toBe("a");
-    expect(pickPage([at("a", PAGE_FAR + 1)], "a")).toBeNull();
-    expect(pickPage([at("a", 50, false)], "a")).toBeNull();
+  it("opens nothing new mid-flight", () => {
+    const deck = createDeck();
+    updateNearby(deck, [at("a", 30)], 0, false);
+    expect(openPages(deck)).toEqual([]);
   });
 
-  it("gives a clicked (pinned) page the panel over a nearer neighbour", () => {
-    const near = [at("clicked", 80), at("between", 40)];
-    expect(pickPage(near, null)).toBe("between");
-    expect(pickPage(near, null, "clicked")).toBe("clicked");
-    expect(pickPage(near, "between", "clicked")).toBe("clicked");
-    // still flying in: nothing opens on the way
-    expect(pickPage([at("clicked", 600), at("between", 40)], null, "clicked")).toBeNull();
-    // open, it holds to PAGE_FAR, then lets go
-    expect(pickPage([at("clicked", PAGE_FAR - 1)], "clicked", "clicked")).toBe("clicked");
-    expect(pickPage([at("clicked", PAGE_FAR + 1)], "clicked", "clicked")).toBeNull();
+  it("keeps pinned pages open wherever the camera goes, earlier pins included", () => {
+    const deck = createDeck();
+    pinPage(deck, "a");
+    pinPage(deck, "b");
+    pinPage(deck, "c");
+    updateNearby(deck, [at("a", 5000), at("b", 40, false), at("c", 10)], 0);
+    expect(openPages(deck)).toEqual(["a", "b", "c"]);
+    expect(deck.pins).toEqual(["a", "b", "c"]);
   });
 
-  it("switches only to a page clearly nearer than the open one", () => {
-    expect(pickPage([at("a", 100), at("b", 95)], "a")).toBe("a");
-    expect(pickPage([at("a", 100), at("b", 80)], "a")).toBe("b");
+  it(`caps the open pages at ${MAX_PAGES}: the least-recently-used nearby page goes first`, () => {
+    const deck = createDeck();
+    const near = [at("n1", 30), at("n2", 35), at("n3", 40), at("n4", 45), at("p", 3000), at("q", 3000)];
+    updateNearby(deck, near, 0);
+    expect(openPages(deck)).toEqual(["n1", "n2", "n3", "n4"]);
+    touchPage(deck, "n1", 10); // n1 is in use: n2 is now the least recent
+    pinPage(deck, "p");
+    expect(openPages(deck)).toEqual(["p", "n1", "n3", "n4"]);
+    // evicted, it stays closed while the camera is still near it
+    updateNearby(deck, near, 20);
+    expect(openPages(deck)).toHaveLength(MAX_PAGES);
+    expect(openPages(deck)).not.toContain("n2");
+    pinPage(deck, "q");
+    expect(openPages(deck)).toEqual(["p", "q", "n1", "n4"]);
+  });
+
+  it("drops the oldest pin when every slot is pinned", () => {
+    const deck = createDeck();
+    for (const id of ["a", "b", "c", "d", "e"]) pinPage(deck, id);
+    expect(openPages(deck)).toEqual(["b", "c", "d", "e"]);
+    // clicking a pinned page again makes it the newest pin
+    pinPage(deck, "b");
+    pinPage(deck, "f");
+    expect(openPages(deck)).toEqual(["d", "e", "b", "f"]);
+  });
+
+  it("a nearer newcomer replaces the least-recently-used nearby page only when clearly nearer", () => {
+    const deck = createDeck();
+    for (const id of ["a", "b", "c"]) pinPage(deck, id);
+    updateNearby(deck, [at("a", 9e3), at("b", 9e3), at("c", 9e3), at("far", 65)], 0);
+    expect(openPages(deck)).toContain("far");
+    updateNearby(deck, [at("a", 9e3), at("b", 9e3), at("c", 9e3), at("far", 65), at("close", 62)], 1);
+    expect(openPages(deck)).toContain("far"); // 62 is not clearly nearer than 65
+    updateNearby(deck, [at("a", 9e3), at("b", 9e3), at("c", 9e3), at("far", 65), at("close", 25)], 2);
+    expect(openPages(deck)).toEqual(["a", "b", "c", "close"]);
+  });
+
+  it("closing one page leaves the rest, and it reopens by proximity only once left behind", () => {
+    const deck = createDeck();
+    pinPage(deck, "a");
+    updateNearby(deck, [at("a", 9e3), at("b", 30), at("c", 40)], 0);
+    expect(openPages(deck)).toEqual(["a", "b", "c"]);
+    closePage(deck, "b");
+    closePage(deck, "a");
+    updateNearby(deck, [at("a", 30), at("b", 30), at("c", 40)], 1);
+    expect(openPages(deck)).toEqual(["c"]);
+    updateNearby(deck, [at("a", PAGE_FAR + 1), at("b", PAGE_FAR + 1), at("c", 40)], 2);
+    updateNearby(deck, [at("a", 30), at("b", 30), at("c", 40)], 3);
+    expect(openPages(deck).sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("drops pages that left the graph", () => {
+    const deck = createDeck();
+    pinPage(deck, "a");
+    updateNearby(deck, [], 0);
+    expect(openPages(deck)).toEqual([]);
   });
 });
 
@@ -95,6 +159,25 @@ describe("createPanel", () => {
     expect(forwardWheel).toHaveBeenCalledTimes(1);
     panel.element.querySelector<HTMLButtonElement>("[data-panel-close]")!.click();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a 640×420 page under a 32px header in a 4px frame, and reports the pointer entering and leaving", () => {
+    expect([PANEL_WIDTH, PANEL_HEIGHT]).toEqual([648, 456]);
+    const onHover = vi.fn();
+    const panel = createPanel(page, { onClose: () => {}, onHover });
+    expect(panel.element.style.width).toBe("648px");
+    expect(panel.element.querySelector<HTMLElement>("[data-panel-card]")!.parentElement!.style.width).toBe("640px");
+    expect(panel.element.style.pointerEvents).toBe("auto");
+    panel.element.dispatchEvent(new PointerEvent("pointerenter"));
+    expect(onHover).toHaveBeenLastCalledWith(true);
+    panel.setLive(true);
+    expect(panel.element.dataset.live).toBe("");
+    panel.element.dispatchEvent(new PointerEvent("pointerleave"));
+    expect(onHover).toHaveBeenLastCalledWith(false);
+    panel.setLive(false);
+    expect(panel.element.dataset.live).toBeUndefined();
+    panel.setState("page");
+    expect(panel.element.querySelector("iframe")!.style.pointerEvents).toBe("auto");
   });
 });
 

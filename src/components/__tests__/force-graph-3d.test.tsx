@@ -1,8 +1,8 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EMPTY_TEXT, ForceGraph3D } from "@/components/force-graph-3d";
-import { IFRAME_SANDBOX, PAGE_FAR, __clearEmbedAnswers } from "@/components/graph-page-panel";
+import { EMPTY_TEXT, ForceGraph3D, LINK_STYLE } from "@/components/force-graph-3d";
+import { IFRAME_SANDBOX, MAX_PAGES, PAGE_FAR, __clearEmbedAnswers } from "@/components/graph-page-panel";
 import { STORAGE_KEY, getAgentState, resetAgentStore, sendMessage, type AgentState } from "@/lib/agent-store";
 import { buildResearchGraph } from "@/lib/research-graph";
 
@@ -22,6 +22,8 @@ type Fake = {
   click?: (node: FakeNode) => void;
   flights: { to: { x: number; y: number; z: number }; ms?: number }[];
   destroyed: boolean;
+  controls: { enabled: boolean; target?: import("three").Vector3 };
+  pointer: boolean;
 };
 const fakes = vi.hoisted(() => ({ list: [] as Fake[] }));
 
@@ -36,7 +38,7 @@ vi.mock("3d-force-graph", async () => {
       const camera = new THREE.PerspectiveCamera(50, 1.6, 0.1, 100000);
       camera.position.set(0, 0, 1000);
       camera.updateProjectionMatrix();
-      const fake: Fake = { element, scene: new THREE.Scene(), camera, data: { nodes: [], links: [] }, setData: 0, flights: [], destroyed: false };
+      const fake: Fake = { element, scene: new THREE.Scene(), camera, data: { nodes: [], links: [] }, setData: 0, flights: [], destroyed: false, controls: { enabled: true }, pointer: true };
       fakes.list.push(fake);
       const renderers = options.extraRenderers ?? [];
       for (const r of renderers) {
@@ -60,6 +62,14 @@ vi.mock("3d-force-graph", async () => {
               return () => ({ forceContextLoss() {}, domElement: canvas });
             case "scene":
               return () => fake.scene;
+            case "controls":
+              return () => fake.controls;
+            case "enablePointerInteraction":
+              return (on?: boolean) => {
+                if (on === undefined) return fake.pointer;
+                fake.pointer = on;
+                return proxy;
+              };
             case "camera":
               return () => camera;
             case "graphData":
@@ -121,6 +131,28 @@ function seededState(): Omit<AgentState, "streaming"> {
   };
 }
 
+const MANY = [
+  "https://example.com",
+  "https://en.wikipedia.org/wiki/Minecraft",
+  "https://www.rfc-editor.org/rfc/rfc9110",
+  "https://en.wikipedia.org/wiki/Mojang_Studios",
+  "https://en.wikipedia.org/wiki/Microsoft",
+];
+/** one chat that found five embeddable pages */
+function manyPages(): Omit<AgentState, "streaming"> {
+  return {
+    chats: [{ id: "m", title: "Chat M", createdAt: 1, updatedAt: 1 }],
+    messages: {
+      m: [{
+        id: "m1", role: "assistant", content: "", createdAt: 1,
+        tools: [{ id: "m-s", name: "Tavily", query: "many", status: "done", sources: MANY.map((url) => ({ title: `Title ${url}`, url })) }] as never,
+      }],
+    },
+    activeChatId: null,
+    groups: [],
+  };
+}
+
 function seed(state = seededState()) {
   resetAgentStore();
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -157,6 +189,7 @@ const mount = async () => {
   return { ...view, fake, host: view.container.querySelector<HTMLElement>("[data-force-graph]")! };
 };
 const node = (fake: Fake, id: string) => fake.data.nodes.find((n) => n.id === id)!;
+const pagesOf = (fake: Fake) => fake.data.nodes.filter((n) => n.kind === "page");
 const frames = (n = 3) => act(() => new Promise<void>((resolve) => {
   let left = n;
   const step = () => (--left <= 0 ? resolve() : requestAnimationFrame(step));
@@ -214,15 +247,15 @@ describe("ForceGraph3D", () => {
     const { fake, host } = await mount();
     const page = node(fake, "page:example.com");
 
-    act(() => fake.click!(page));
-    expect(fake.flights.at(-1)?.ms).toBe(800);
+    act(() => fake.camera.position.set(page.x!, page.y!, page.z! + 50));
     await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(1));
     const frame = host.querySelector("iframe")!;
     expect(frame.getAttribute("src")).toBe("https://example.com/");
     expect(frame.getAttribute("sandbox")).toBe(IFRAME_SANDBOX);
     expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(frame.getAttribute("loading")).toBe("lazy");
-    expect(host.dataset.page).toBe("https://example.com/");
+    expect(host.dataset.pages).toBe("https://example.com/");
+    expect(host.dataset.pinned).toBeUndefined();
     // it sits in the CSS3D layer, which lets the rest of the view through to the canvas
     const layer = host.querySelector<HTMLElement>("[data-css3d]")!;
     expect(layer.contains(frame)).toBe(true);
@@ -234,7 +267,20 @@ describe("ForceGraph3D", () => {
     await waitFor(() => expect(host.querySelector("iframe")).toBeNull());
     expect(host.querySelector("[data-graph-panel]")).toBeNull();
     expect(fake.scene.children.some((c) => "isCSS3DObject" in c)).toBe(false);
-    expect(host.dataset.page).toBeUndefined();
+    expect(host.dataset.pages).toBeUndefined();
+  });
+
+  it("pins a clicked page open: it flies there and the page stays as the camera leaves", async () => {
+    seed();
+    const { fake, host } = await mount();
+    const page = node(fake, "page:example.com");
+    act(() => fake.click!(page));
+    expect(fake.flights.at(-1)?.ms).toBe(800);
+    await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(1));
+    expect(host.dataset.pinned).toBe("https://example.com/");
+    act(() => fake.camera.position.set(page.x!, page.y!, page.z! + PAGE_FAR + 4000));
+    await frames();
+    expect(host.querySelectorAll("iframe")).toHaveLength(1);
   });
 
   it("shows a card that opens the page in a new tab for a site that forbids framing", async () => {
@@ -257,7 +303,7 @@ describe("ForceGraph3D", () => {
       `/api/embed-check?url=${encodeURIComponent(BLOCKED)}`,
     ]);
 
-    // the close button flies back out, and the card goes
+    // the close button of the only page flies back out, and the card goes
     act(() => panel.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
     await waitFor(() => expect(host.querySelector("[data-graph-panel]")).toBeNull());
   });
@@ -271,7 +317,7 @@ describe("ForceGraph3D", () => {
     Object.assign(neighbour, { x: example.x, y: example.y, z: example.z! + 220 });
     act(() => fake.click!(example));
     await waitFor(() => expect(host.querySelector("[data-panel-close]")).not.toBeNull());
-    expect(host.dataset.page).toBe("https://example.com/");
+    expect(host.dataset.pages).toBe("https://example.com/");
 
     act(() => host.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
     await frames();
@@ -281,16 +327,129 @@ describe("ForceGraph3D", () => {
       expect(camera.distanceTo({ x: n.x!, y: n.y!, z: n.z! } as never)).toBeGreaterThan(PAGE_FAR);
   });
 
-  it("only ever shows the nearest page", async () => {
+  it(`keeps several clicked pages open together, at most ${MAX_PAGES}: the oldest pin goes first`, async () => {
+    seed(manyPages());
+    const { fake, host } = await mount();
+    const pages = pagesOf(fake);
+    const urls = pages.map((p) => p.url!);
+    const panels = () => [...host.querySelectorAll<HTMLElement>("[data-graph-panel]")].map((p) => p.dataset.graphPanel);
+
+    for (const p of pages.slice(0, 3)) act(() => fake.click!(p));
+    await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(3));
+    expect(panels().sort()).toEqual(urls.slice(0, 3).sort());
+
+    act(() => fake.click!(pages[3]));
+    act(() => fake.click!(pages[4]));
+    await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(MAX_PAGES));
+    await frames();
+    expect(panels()).toHaveLength(MAX_PAGES);
+    expect(panels()).not.toContain(urls[0]);
+    expect(host.dataset.pinned).toBe(urls.slice(1).join(" "));
+  });
+
+  it("× closes only its own page, and leaves the camera where it is", async () => {
+    seed(manyPages());
+    const { fake, host } = await mount();
+    const [a, b] = pagesOf(fake);
+    act(() => fake.click!(a));
+    act(() => fake.click!(b));
+    await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(2));
+    const flights = fake.flights.length;
+    const panel = host.querySelector<HTMLElement>(`[data-graph-panel="${a.url}"]`)!;
+    act(() => panel.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
+    await frames();
+    expect([...host.querySelectorAll<HTMLElement>("[data-graph-panel]")].map((p) => p.dataset.graphPanel)).toEqual([b.url]);
+    expect(fake.flights).toHaveLength(flights);
+  });
+
+  it("hands all input to the page under the pointer, and gives it back on the way out", async () => {
+    seed(manyPages());
+    const { fake, host } = await mount();
+    const [a, b] = pagesOf(fake);
+    act(() => fake.click!(a));
+    act(() => fake.click!(b));
+    await waitFor(() => expect(host.querySelectorAll("iframe")).toHaveLength(2));
+    const one = host.querySelector<HTMLElement>(`[data-graph-panel="${a.url}"]`)!;
+    const two = host.querySelector<HTMLElement>(`[data-graph-panel="${b.url}"]`)!;
+
+    act(() => { one.dispatchEvent(new PointerEvent("pointerenter")); });
+    expect(fake.controls.enabled).toBe(false);
+    expect(fake.pointer).toBe(false);
+    expect(one.dataset.live).toBe("");
+    expect(two.dataset.live).toBeUndefined();
+
+    act(() => { one.dispatchEvent(new PointerEvent("pointerleave")); });
+    expect(fake.controls.enabled).toBe(true);
+    expect(fake.pointer).toBe(true);
+    expect(one.dataset.live).toBeUndefined();
+
+    // a missed pointerleave: the next move over the graph itself ends it
+    act(() => { two.dispatchEvent(new PointerEvent("pointerenter")); });
+    expect(fake.controls.enabled).toBe(false);
+    act(() => { host.querySelector("canvas")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true })); });
+    expect(fake.controls.enabled).toBe(true);
+
+    // closing the hovered page gives the graph its controls back too
+    act(() => { two.dispatchEvent(new PointerEvent("pointerenter")); });
+    act(() => two.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
+    expect(fake.controls.enabled).toBe(true);
+  });
+
+  it("hides a pinned page once it is behind the camera, and shows it again in front", async () => {
+    seed();
+    const { fake, host } = await mount();
+    const page = node(fake, "page:example.com");
+    act(() => fake.click!(page));
+    await waitFor(() => expect(host.querySelector("iframe")).not.toBeNull());
+    const panel = host.querySelector<HTMLElement>("[data-graph-panel]")!;
+    // past the page, still looking down -z: the page is behind the viewer
+    act(() => {
+      fake.camera.position.set(page.x!, page.y!, page.z! - 100);
+      fake.camera.lookAt(page.x!, page.y!, page.z! - 1000);
+    });
+    await waitFor(() => expect(panel.style.display).toBe("none"));
+    expect(host.querySelector("iframe")).not.toBeNull(); // still open, just not drawn
+    act(() => {
+      fake.camera.position.set(page.x!, page.y!, page.z! + 300);
+      fake.camera.lookAt(page.x!, page.y!, page.z!);
+    });
+    await waitFor(() => expect(panel.style.display).toBe(""));
+  });
+
+  it("re-aims the controls along the view when they take over again, so the view doesn't snap", async () => {
+    const THREE = await import("three");
     seed();
     const { fake, host } = await mount();
     act(() => fake.click!(node(fake, "page:example.com")));
-    await waitFor(() => expect(host.querySelectorAll("[data-graph-panel]")).toHaveLength(1));
-    act(() => fake.click!(node(fake, "page:youtube.com/watch?v=dQw4w9WgXcQ")));
-    await waitFor(() => expect(host.dataset.page).toBe(BLOCKED));
-    await frames();
-    expect(host.querySelectorAll("[data-graph-panel]")).toHaveLength(1);
-    expect(host.querySelector("iframe")).toBeNull();
+    await waitFor(() => expect(host.querySelector("[data-graph-panel]")).not.toBeNull());
+    const panel = host.querySelector<HTMLElement>("[data-graph-panel]")!;
+    act(() => { panel.dispatchEvent(new PointerEvent("pointerenter")); });
+    fake.controls.target = new THREE.Vector3(5000, 0, 0); // stale while disabled
+    act(() => { panel.dispatchEvent(new PointerEvent("pointerleave")); });
+    const ahead = fake.camera.getWorldDirection(new THREE.Vector3());
+    const toTarget = fake.controls.target.clone().sub(fake.camera.position).normalize();
+    expect(toTarget.dot(ahead)).toBeCloseTo(1);
+  });
+
+  it("doesn't hand input to a page mid-drag on the graph", async () => {
+    seed();
+    const { fake, host } = await mount();
+    act(() => fake.click!(node(fake, "page:example.com")));
+    await waitFor(() => expect(host.querySelector("[data-graph-panel]")).not.toBeNull());
+    const panel = host.querySelector<HTMLElement>("[data-graph-panel]")!;
+    act(() => { host.querySelector("canvas")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); });
+    act(() => { panel.dispatchEvent(new PointerEvent("pointerenter")); });
+    expect(fake.controls.enabled).toBe(true);
+    act(() => { window.dispatchEvent(new PointerEvent("pointerup")); });
+    await act(() => new Promise((r) => setTimeout(r, 5)));
+    act(() => { panel.dispatchEvent(new PointerEvent("pointerenter")); });
+    expect(fake.controls.enabled).toBe(false);
+  });
+
+  it("draws conflicts solid, opaque red with nothing drifting, wider than an agreement", () => {
+    expect(LINK_STYLE.conflicts).toMatchObject({ color: "#DC2626", particles: 0, opaque: true });
+    expect(LINK_STYLE.conflicts.width).toBeGreaterThan(LINK_STYLE.agrees.width);
+    expect(LINK_STYLE.agrees.opaque).toBeUndefined();
   });
 
   it("moves the camera instantly under reduced motion", async () => {

@@ -70,7 +70,7 @@ describe("crossrefLinks", () => {
     },
   ]);
 
-  it("makes agrees grey and wider per shared claim, conflicts red with slow particles", () => {
+  it("makes agrees grey and wider per shared claim, conflicts solid red with no particles", () => {
     const links = crossrefLinks(crossref);
     const agree = links.find((l) => l.kind === "agrees")!;
     expect(agree).toMatchObject({ source: "a.com/x", target: "b.com/y", color: CROSSREF_LINK_STYLE.agrees.color, particles: 0 });
@@ -80,15 +80,15 @@ describe("crossrefLinks", () => {
 
     const conflicts = links.filter((l) => l.kind === "conflicts");
     expect(conflicts).toHaveLength(2);
-    expect(conflicts[0]).toMatchObject({ color: "#DC2626", particles: 3, particleWidth: 2, particleSpeed: 0.004 });
+    expect(conflicts[0]).toMatchObject({ color: "#DC2626", width: CROSSREF_LINK_STYLE.conflicts.width, particles: 0 });
+    expect(CROSSREF_LINK_STYLE.conflicts.width).toBeGreaterThan(CROSSREF_LINK_STYLE.agrees.width);
     // red is for conflicts only
     expect(links.filter((l) => l.color === "#DC2626").every((l) => l.kind === "conflicts")).toBe(true);
     // hover label: the claim, escaped, with ✓ and ✗ hosts
     expect(conflicts[0].label).toBe("Sold &lt;300M&gt;<br>✓ a.com, b.com<br>✗ c.com");
   });
 
-  it("stills the particles under reduced motion and drops links to missing nodes", () => {
-    expect(crossrefLinks(crossref, { reducedMotion: true }).every((l) => l.particles === 0)).toBe(true);
+  it("drops links to missing nodes", () => {
     const onlyAB = crossrefLinks(crossref, { hasNode: (id) => id !== "c.com" });
     expect(onlyAB.map((l) => l.kind)).toEqual(["agrees"]);
   });
