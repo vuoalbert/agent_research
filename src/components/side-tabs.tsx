@@ -56,10 +56,26 @@ import { cn } from "@/lib/utils";
  * flares — the tab opens into its page the way a browser tab does. The other
  * three tabs fade and tuck into the border. Pressing the tab again, or Escape,
  * runs it all back.
+ *
+ * ── Making room ──────────────────────────────────────────────────────────────
+ * An open panel does not cover the chat: the chat moves out of its way. The
+ * stack writes how far the panel and its riding tab reach in from the card's
+ * inner right edge — the panel's width plus the tab's REACH, 0 when closed —
+ * to `--side-panel-inset` on its parent, the content column, which the card is
+ * also in. The AI pane pads the body under its header strip by it, so the
+ * thread and the composer centre in what is left. The inset rides the slide's
+ * own duration and curve, open and closed, so the chat gives way exactly as
+ * fast as the panel arrives; it is a motion value written straight to the
+ * style, so nothing re-renders on the way.
  */
 
 /** how far a tab reaches into the card past the inner edge of its border, in px */
 export const SIDE_TAB_REACH = 34;
+/**
+ * The custom property, on the content column, that holds how much of the
+ * card's right side an open panel and its tab take up, in px.
+ */
+export const SIDE_PANEL_INSET = "--side-panel-inset";
 /** the tab's body, end to end along the card edge (flares not included) */
 const LENGTH = 124;
 /** radius of the two rounded inner corners */
@@ -156,6 +172,8 @@ export function SideTabs({ className }: { className?: string }) {
         MotionValue<number>
       >,
   );
+  /** how much of the card the open panel and its tab take up; see the header */
+  const [inset] = useState(() => motionValue(0));
   /** `open` as of the last toggle, for animation callbacks that outlive a render */
   const openRef = useRef(open);
   const widthRef = useRef(panelWidth);
@@ -168,6 +186,11 @@ export function SideTabs({ className }: { className?: string }) {
     openRef.current = next;
     setOpen(next);
     if (next) setPresent((p) => (p.includes(next) ? p : [...p, next]));
+
+    /* one tab to another keeps the room it has; only opening and closing move it */
+    const room = next === null ? 0 : widthRef.current + SIDE_TAB_REACH;
+    if (reduce) inset.jump(room);
+    else animate(inset, room, timing(next === null ? SLIDE_BACK : SLIDE, reduce));
 
     for (const label of SIDE_TAB_LABELS) {
       const x = offsets[label];
@@ -215,11 +238,29 @@ export function SideTabs({ className }: { className?: string }) {
       widthRef.current = width;
       setPanelWidth(width);
       const current = openRef.current;
-      if (current) offsets[current].jump(-width);
+      if (current) {
+        offsets[current].jump(-width);
+        inset.jump(width + SIDE_TAB_REACH);
+      }
     });
     observer.observe(column);
     return () => observer.disconnect();
-  }, [offsets]);
+  }, [offsets, inset]);
+
+  /* The inset, onto the content column for the pane to read. Whole pixels, so
+     the chat's text is never set on a fractional edge mid-slide. */
+  useEffect(() => {
+    const column = rootRef.current?.parentElement;
+    if (!column) return;
+    const write = (value: number) =>
+      column.style.setProperty(SIDE_PANEL_INSET, `${Math.round(value)}px`);
+    write(inset.get());
+    const unsubscribe = inset.on("change", write);
+    return () => {
+      unsubscribe();
+      column.style.removeProperty(SIDE_PANEL_INSET);
+    };
+  }, [inset]);
 
   return (
     <div
