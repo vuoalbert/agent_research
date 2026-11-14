@@ -22,6 +22,8 @@ export type GraphControls = {
   setHighlight: (ids: readonly string[] | null) => void;
   /** the graph as drawn right now */
   getGraph: () => ResearchGraph;
+  /** the node the camera last flew to (a click or the chatbox), if it is still drawn */
+  getFocus?: () => string | null;
 };
 
 export type Highlight = ReadonlySet<string> | null;
@@ -65,7 +67,13 @@ export function dimmedParts(graph: ResearchGraph, ids: readonly string[] | null)
 export type GraphChatNode = { id: string; kind: ResearchNodeKind; label: string; degree: number };
 export type GraphChatLink = { source: string; target: string; kind: ResearchLinkKind };
 export type GraphChatGraph = { nodes: GraphChatNode[]; links: GraphChatLink[] };
-export type GraphChatAnswer = { reply: string; focus: string | null; highlight: string[] };
+/** a Telem search the chatbox ran ("find more like this"): what it found, and the node they hang off */
+export type GraphChatFound = {
+  query: string;
+  from: string | null;
+  sources: { title: string; url: string; excerpt?: string; provider?: string }[];
+};
+export type GraphChatAnswer = { reply: string; focus: string | null; highlight: string[]; found?: GraphChatFound };
 
 /** the drawn graph as the chat API takes it: every node with its degree */
 export function graphChatPayload(graph: ResearchGraph): GraphChatGraph {

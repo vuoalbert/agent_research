@@ -6,12 +6,19 @@
  * The panel is plain DOM (built here, never React-rendered, so it can live in
  * a CSS3DRenderer layer): a header strip with the page's favicon, title, host,
  * "Open in new tab" and a close button, over either the live page in an
- * <iframe> or — for sites that forbid embedding — a card that opens the page
- * in a new tab. Whether a site may be embedded comes from `/api/embed-check`,
- * remembered in memory for the session. Nothing is captured or stored.
+ * <iframe> or — for sites that forbid embedding — the page read through Telem
+ * (`/api/telem/read`): its title, host and text as a clean, scrollable reading
+ * view. Only if Telem can't read it either is it a card that opens the page in
+ * a new tab. Platform links (YouTube, X, TikTok, LinkedIn…) are read by their
+ * platform's Telem providers, so a video shows its transcript. Whether a site
+ * may be embedded comes from `/api/embed-check`, remembered in memory for the
+ * session, as are the reads. Nothing is stored.
  *
- * All page-supplied text (titles) goes in through `textContent`.
+ * All page-supplied text (titles, page text) goes in through `textContent`.
  */
+
+import { readThroughTelem, type ReadView } from "./telem-reader-data";
+import { renderReader } from "./telem-reader-dom";
 
 /**
  * The panel's CSS size: an iframe of 640×420 under a 32px header, in a 4px
@@ -46,7 +53,7 @@ export const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-popups allo
 
 export type PanelPage = { id: string; url: string; title: string; host: string };
 export type EmbedAnswer = { embeddable: boolean; reason?: string };
-export type PanelState = "checking" | "page" | "card";
+export type PanelState = "checking" | "page" | "card" | "reader";
 
 /**
  * How far from a page the camera must sit for the panel to fill FIT_FILL of
@@ -244,7 +251,14 @@ export function createPanel(
     onClose,
     forwardWheel,
     onHover,
-  }: { onClose: () => void; forwardWheel?: (event: WheelEvent) => void; onHover?: (over: boolean) => void },
+    read = readThroughTelem,
+  }: {
+    onClose: () => void;
+    forwardWheel?: (event: WheelEvent) => void;
+    onHover?: (over: boolean) => void;
+    /** how a blocked page is read instead (Telem, unless a test says otherwise) */
+    read?: (url: string) => Promise<ReadView>;
+  },
 ): Panel {
   const element = el("div", {
     width: `${PANEL_WIDTH}px`,
@@ -334,8 +348,9 @@ export function createPanel(
       chrome.addEventListener(
         "wheel",
         (event) => {
-          /* the live page scrolls itself; everything else zooms the graph */
-          if ((event.target as HTMLElement | null)?.tagName === "IFRAME") return;
+          /* the live page and the reading view scroll themselves; everything else zooms the graph */
+          const target = event.target as HTMLElement | null;
+          if (target?.tagName === "IFRAME" || target?.closest?.("[data-panel-reader]")) return;
           event.preventDefault();
           forwardWheel(event);
         },
@@ -369,7 +384,12 @@ export function createPanel(
     return wrap;
   };
 
+  /** the read in flight; a newer state (or read) wins */
+  let reads = 0;
+  /** "reader" is where "card" goes once Telem has read the page, never set directly */
   const setState = (state: PanelState, reason?: string) => {
+    if (state === "reader") return;
+    reads += 1;
     element.dataset.state = state;
     if (state === "page") {
       const frame = document.createElement("iframe");
@@ -391,7 +411,21 @@ export function createPanel(
       });
       body.replaceChildren(frame);
     } else if (state === "card") {
-      body.replaceChildren(card(reason ? `${reason}.` : "This site doesn't allow being shown here.", true));
+      const why = reason ? `${reason}.` : "This site doesn't allow being shown here.";
+      body.replaceChildren(card(`${why} Reading it through Telem…`, false));
+      const asked = reads;
+      read(page.url).then(
+        (view) => {
+          if (asked !== reads || element.dataset.state !== "card") return;
+          element.dataset.state = "reader";
+          body.replaceChildren(renderReader(view, { note: `${why} Shown as read by Telem.`, title: page.title }));
+        },
+        (error: unknown) => {
+          if (asked !== reads || element.dataset.state !== "card") return;
+          const failed = error instanceof Error && error.message ? ` Telem couldn't read it either: ${error.message}` : "";
+          body.replaceChildren(card(`${why}${failed}`, true));
+        },
+      );
     } else {
       body.replaceChildren(card("Loading the page…", false));
     }

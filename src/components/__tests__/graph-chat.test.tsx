@@ -3,6 +3,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GraphChat, PLACEHOLDER, type AskGraph } from "@/components/graph-chat";
+import { STORAGE_KEY, __resetAgentStore, getAgentState } from "@/lib/agent-store";
 import type { GraphChatAnswer, GraphControls } from "@/lib/graph-highlight";
 import type { ResearchGraph } from "@/lib/research-graph";
 
@@ -18,9 +19,9 @@ const GRAPH: ResearchGraph = {
   ],
 };
 
-function setup(ask: AskGraph, graph = GRAPH) {
+function setup(ask: AskGraph, graph = GRAPH, focus: string | null = null) {
   const controls = createRef<GraphControls | null>() as { current: GraphControls | null };
-  const api = { focusNode: vi.fn(() => true), setHighlight: vi.fn(), getGraph: () => graph };
+  const api = { focusNode: vi.fn(() => true), setHighlight: vi.fn(), getGraph: () => graph, getFocus: () => focus };
   controls.current = api;
   render(<GraphChat controls={controls} ask={ask} />);
   const input = screen.getByPlaceholderText(PLACEHOLDER);
@@ -114,6 +115,40 @@ describe("GraphChat", () => {
     } finally {
       window.removeEventListener("keydown", onWindow);
     }
+  });
+
+  it("adds what a Telem search found to the focused node's chat, and lights it up", async () => {
+    __resetAgentStore();
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        chats: [{ id: "a", title: "Chat A", createdAt: 1, updatedAt: 1 }],
+        messages: {
+          a: [
+            { id: "m1", role: "user", content: "x?", createdAt: 1 },
+            { id: "m2", role: "assistant", content: "X.", createdAt: 2, tools: [{ id: "t1", name: "Tavily", action: "read", query: "x.org", status: "done", sources: [{ title: "X", url: "https://x.org/" }] }] },
+          ],
+        },
+        activeChatId: null,
+      }),
+    );
+    const ask = vi.fn<AskGraph>(async () => ({
+      reply: "Found 1 new source for “x follow-up” with Telem.",
+      focus: "page:x.org",
+      highlight: [],
+      found: { query: "x follow-up", from: "page:x.org", sources: [{ title: "Z", url: "https://z.org/new", excerpt: "…", provider: "exa" }] },
+    }));
+    const { api, send } = setup(ask, GRAPH, "page:x.org");
+    send("find more sources like this");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Found 1 new source"));
+    // "this" is the node the camera is on, and its chat files the Telem session
+    expect(ask.mock.calls[0][3]).toEqual({ focus: "page:x.org", chatId: "a" });
+    const call = getAgentState().messages.a[1].tools!.at(-1)!;
+    expect(call).toMatchObject({ name: "Telem", query: "x follow-up", origin: "graph", from: "page:x.org" });
+    expect(call.sources).toEqual([{ title: "Z", url: "https://z.org/new" }]);
+    expect(api.setHighlight).toHaveBeenLastCalledWith(["page:x.org", `search:a:m2:${call.id}`, "page:z.org/new"]);
+    await waitFor(() => expect(api.focusNode).toHaveBeenCalledWith("page:x.org"));
+    __resetAgentStore();
   });
 
   it("shows an error, and answers an empty graph locally", async () => {

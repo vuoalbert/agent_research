@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EMPTY_TEXT, ForceGraph3D, LINK_STYLE } from "@/components/force-graph-3d";
 import { IFRAME_SANDBOX, MAX_PAGES, PAGE_FAR, __clearEmbedAnswers } from "@/components/graph-page-panel";
+import { __clearReads } from "@/components/telem-reader-data";
 import { STORAGE_KEY, getAgentState, resetAgentStore, sendMessage, type AgentState } from "@/lib/agent-store";
 import { buildResearchGraph } from "@/lib/research-graph";
 
@@ -158,10 +159,15 @@ function seed(state = seededState()) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+/** whether the Telem read of a blocked page fails */
+const telem = { fail: false };
+
 beforeEach(() => {
   fakes.list = [];
   motion.reduced = false;
+  telem.fail = false;
   __clearEmbedAnswers();
+  __clearReads();
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input) => {
     const url = new URL(String(input), "http://localhost");
@@ -170,6 +176,19 @@ beforeEach(() => {
       return Response.json(
         target.includes("youtube") ? { embeddable: false, reason: "The site's X-Frame-Options (SAMEORIGIN) forbids embedding" } : { embeddable: true },
       );
+    }
+    if (url.pathname === "/api/telem/read") {
+      if (telem.fail) return Response.json({ error: "Every provider declined the page" }, { status: 502 });
+      const target = url.searchParams.get("url") ?? "";
+      return Response.json({
+        url: target,
+        title: "Never Gonna Give You Up",
+        host: "youtube.com",
+        text: "# Transcript\n\n[00:18] We're no strangers to love\n[00:22] You know the rules\n\n![thumb](https://i.ytimg.com/x.jpg)",
+        provider: "fetchlayer_youtube",
+        platform: "YouTube",
+        chars: 90,
+      });
     }
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -283,29 +302,53 @@ describe("ForceGraph3D", () => {
     expect(host.querySelectorAll("iframe")).toHaveLength(1);
   });
 
-  it("shows a card that opens the page in a new tab for a site that forbids framing", async () => {
+  it("reads a site that forbids framing through Telem, in a scrollable reading view", async () => {
+    seed();
+    const { fake, host } = await mount();
+    act(() => fake.click!(node(fake, "page:youtube.com/watch?v=dQw4w9WgXcQ")));
+    await waitFor(() => expect(host.querySelector("[data-panel-reader]")).not.toBeNull());
+    expect(host.querySelector("iframe")).toBeNull();
+    const panel = host.querySelector<HTMLElement>("[data-graph-panel]")!;
+    expect(panel.dataset.state).toBe("reader");
+    const reader = panel.querySelector<HTMLElement>("[data-panel-reader]")!;
+    expect(reader.textContent).toContain("Never Gonna Give You Up");
+    expect(reader.textContent).toContain("youtube.com · Read by Telem · fetchlayer_youtube · YouTube");
+    expect(reader.textContent).toContain("X-Frame-Options");
+    // a transcript keeps a line per paragraph; images never load
+    expect([...reader.querySelectorAll("p")].map((p) => p.textContent)).toContain("[00:22] You know the rules");
+    expect(reader.querySelector("img")).toBeNull();
+    expect(reader.style.overflowY).toBe("auto");
+    expect(reader.className).toContain("scroll-fade-y");
+    // the header still opens the page itself
+    const open = panel.querySelector<HTMLAnchorElement>("[data-panel-open]")!;
+    expect(open.href).toBe(BLOCKED);
+    expect(open.target).toBe("_blank");
+    expect(fetchMock.mock.calls.map(([u]) => String(u))).toEqual([
+      `/api/embed-check?url=${encodeURIComponent(BLOCKED)}`,
+      `/api/telem/read?url=${encodeURIComponent(BLOCKED)}`,
+    ]);
+
+    // the close button of the only page flies back out, and the reader goes
+    act(() => panel.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
+    await waitFor(() => expect(host.querySelector("[data-graph-panel]")).toBeNull());
+  });
+
+  it("falls back to a card that opens the page in a new tab when Telem can't read it either", async () => {
+    telem.fail = true;
     seed();
     const { fake, host } = await mount();
     act(() => fake.click!(node(fake, "page:youtube.com/watch?v=dQw4w9WgXcQ")));
     await waitFor(() => expect(host.querySelector("[data-panel-card] a")).not.toBeNull());
-    expect(host.querySelector("iframe")).toBeNull();
     const panel = host.querySelector<HTMLElement>("[data-graph-panel]")!;
     expect(panel.dataset.state).toBe("card");
     expect(panel.textContent).toContain("X-Frame-Options");
+    expect(panel.textContent).toContain("Telem couldn't read it either: Every provider declined the page");
     const open = panel.querySelector<HTMLAnchorElement>("[data-panel-card] a")!;
     expect(open.href).toBe(BLOCKED);
-    expect(open.target).toBe("_blank");
     expect(open.rel).toBe("noopener noreferrer");
     expect(panel.querySelector<HTMLImageElement>("img")!.src).toBe(
       "https://www.google.com/s2/favicons?domain=youtube.com&sz=64",
     );
-    expect(fetchMock.mock.calls.map(([u]) => String(u))).toEqual([
-      `/api/embed-check?url=${encodeURIComponent(BLOCKED)}`,
-    ]);
-
-    // the close button of the only page flies back out, and the card goes
-    act(() => panel.querySelector<HTMLButtonElement>("[data-panel-close]")!.click());
-    await waitFor(() => expect(host.querySelector("[data-graph-panel]")).toBeNull());
   });
 
   it("closing a page backs out past every page, so no neighbour opens instead", async () => {

@@ -27,6 +27,13 @@ import { crossrefLinks } from "@/lib/crossref-links";
  *             live chat's cross-references merged); wider per shared claim
  *   conflicts page ↔ page, one supports a claim the other contradicts
  *
+ * A Telem search the user ran outside the chat (the graph's "find more like
+ * this", the Knowledge base's Find more — calls with an `origin`) is a search
+ * node of its own: built-on the graph node it was asked from (`from`, when
+ * that node is drawn) or asked by its chat, with `found` links to its pages.
+ * They are drawn after every chat's own research, so the node they hang off
+ * already exists, and they never join a turn's built-on chain.
+ *
  * At most one link per pair of nodes: the first reason wins (a page that a
  * search found and the next read opened stays a `found` link) — except that
  * agrees / conflicts replace a `cross-ref` pair, and a pair that both agrees
@@ -122,6 +129,9 @@ export function buildResearchGraph(
     return id;
   };
 
+  /** Telem searches made outside the chat, drawn once the research is laid out */
+  const later: { call: ToolCall; searchId: string; ensureChat: () => string }[] = [];
+
   for (const chat of chats) {
     if (chat.archived) continue;
     const chatId = chatNodeId(chat.id);
@@ -164,6 +174,10 @@ export function buildResearchGraph(
           }
           continue;
         }
+        if (call.origin === "graph" || call.origin === "kb") {
+          later.push({ call, searchId: searchNodeId(chat.id, message.id, call.id), ensureChat });
+          continue;
+        }
         const agentId = typeof call.agentId === "string" ? call.agentId : null;
         const last = agentId ? (agentPrevious.get(agentId) ?? null) : previous;
         const root = () => (agentId ? ensureSubagent(agentId) : ensureChat());
@@ -191,6 +205,19 @@ export function buildResearchGraph(
           if (found) link("found", id, found);
         }
       }
+    }
+  }
+
+  for (const { call, searchId, ensureChat } of later) {
+    const sources = Array.isArray(call.sources) ? call.sources : [];
+    if (sources.length === 0) continue;
+    const anchor = typeof call.from === "string" && nodes.has(call.from) ? call.from : null;
+    nodes.set(searchId, { id: searchId, kind: "search", label: String(call.query ?? "").trim() || "Find more" });
+    if (anchor) link("built-on", anchor, searchId);
+    else link("asked", ensureChat(), searchId);
+    for (const source of sources) {
+      const found = page(source);
+      if (found) link("found", searchId, found);
     }
   }
 

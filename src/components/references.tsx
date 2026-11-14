@@ -1,11 +1,13 @@
 "use client";
 
-import { ArrowLeft, FileText, Folder, FolderOpen } from "lucide-react";
+import { ArrowLeft, BookOpenText, Check, FileText, Folder, FolderOpen, LoaderCircle, Save } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { Markdown } from "@/components/ai/markdown";
 import { NO_SCROLLBAR } from "@/components/ai/tokens";
+import { ReadBody, ReadStatus, useTelemRead } from "@/components/telem-reader";
+import { readByline } from "@/components/telem-reader-data";
 import { Button } from "@/components/ui/button";
 import { hostOf } from "@/components/knowledge-base";
 import { useAgentStore } from "@/lib/agent-store";
@@ -28,6 +30,10 @@ import {
  * Markdown below, `[[links]]` that open the note they name — with a back
  * button that walks the notes opened so far, then returns to the tree.
  *
+ * A note about a page (its `url` field) has "Read full page": the page, read
+ * through Telem, shown below the note — not written anywhere until "Save to
+ * vault" appends it to the note under a managed "Full page" section.
+ *
  * Like the Knowledge base, the heading stays put and only the area below it
  * scrolls (scrollbar hidden, shadcn's `scroll-fade-y` mask at the edges).
  * The tree is fetched when the panel opens and again when a chat turn finishes (a turn may have
@@ -36,6 +42,7 @@ import {
 
 export const TREE_ENDPOINT = "/api/vault/tree";
 export const NOTE_ENDPOINT = "/api/vault/note";
+export const FULL_PAGE_ENDPOINT = "/api/vault/full-page";
 
 /* the Button primitive's box, reset to an Obsidian-like tree row */
 const ROW =
@@ -239,6 +246,96 @@ function NoteBody({
   );
 }
 
+/* ── Full page ─────────────────────────────────────────────────────────────── */
+
+const SMALL_ACTION =
+  "h-6 gap-1 rounded-md border border-[#E1E2E3] bg-white px-2 text-[12px] font-medium text-plane-ink-2 hover:bg-[#F9F9F9] focus-visible:bg-[#F9F9F9] focus-visible:ring-0 active:not-aria-[haspopup]:translate-y-0 disabled:opacity-60 motion-reduce:transition-none";
+
+/** the page a note names, if it names one */
+export function notePageUrl(note: VaultNoteView): string | null {
+  const url = note.frontmatter.url;
+  return url && /^https?:\/\//i.test(url) ? url : null;
+}
+
+type SaveState = { status: "idle" } | { status: "saving" } | { status: "saved" } | { status: "error"; message: string };
+
+/** "Read full page": the note's page through Telem, below it, and "Save to vault" */
+function FullPage({ note, url, onSaved }: { note: VaultNoteView; url: string; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const read = useTelemRead(open ? url : null);
+  const [save, setSave] = useState<SaveState>({ status: "idle" });
+
+  const saveToVault = async () => {
+    setSave({ status: "saving" });
+    try {
+      const response = await fetch(FULL_PAGE_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: note.path, url }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || `Couldn't save (${response.status})`);
+      }
+      setSave({ status: "saved" });
+      setOpen(false);
+      onSaved();
+    } catch (error) {
+      setSave({ status: "error", message: error instanceof Error ? error.message : "Couldn't save" });
+    }
+  };
+
+  if (!open) {
+    return (
+      <div data-ref="full-page" data-state={save.status === "saved" ? "saved" : "closed"} className="flex items-center gap-2 pt-1 pb-3">
+        <Button variant="nav" data-ref="read-full-page" onClick={() => setOpen(true)} className={SMALL_ACTION}>
+          <BookOpenText aria-hidden size={13} className="size-3.5" />
+          Read full page
+        </Button>
+        {save.status === "saved" && (
+          <span data-ref="saved" className="flex items-center gap-1 text-[12px] leading-4 text-plane-faint">
+            <Check aria-hidden size={12} />
+            Saved to the note
+          </span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <section data-ref="full-page" data-state={read.status} aria-label="Full page" className="mt-1 border-t border-plane-border pt-3 pb-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-[12px] leading-4 text-plane-faint">
+          {read.status === "ready" ? `Full page · ${readByline(read.view)}` : "Full page"}
+        </p>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {read.status === "ready" && (
+            <Button
+              variant="nav"
+              data-ref="save-full-page"
+              disabled={save.status === "saving"}
+              onClick={saveToVault}
+              title="Append the page to this note, under “Full page”"
+              className={SMALL_ACTION}
+            >
+              {save.status === "saving" ? (
+                <LoaderCircle aria-hidden size={13} className="size-3.5 motion-safe:animate-spin" />
+              ) : (
+                <Save aria-hidden size={13} className="size-3.5" />
+              )}
+              Save to vault
+            </Button>
+          )}
+          <Button variant="nav" data-ref="hide-full-page" onClick={() => setOpen(false)} className={cn(SMALL_ACTION, "border-0")}>
+            Hide
+          </Button>
+        </div>
+      </div>
+      {save.status === "error" && <p className="mt-1 text-[12px] leading-4 text-plane-muted">{save.message}</p>}
+      <div className="mt-2">{read.status === "ready" ? <ReadBody view={read.view} /> : <ReadStatus state={read} />}</div>
+    </section>
+  );
+}
+
 /* ── Panel ─────────────────────────────────────────────────────────────────── */
 
 export function References({ titleId, open = true }: { titleId: string; open?: boolean }) {
@@ -345,7 +442,12 @@ export function References({ titleId, open = true }: { titleId: string; open?: b
           className={cn("scroll-fade-y scroll-fade-7 -mx-4 mt-2 min-h-0 flex-1 overflow-y-auto px-4", NO_SCROLLBAR)}
         >
           {note.status === "ready" ? (
-            <NoteBody note={note.data} titles={titles} onOpen={openNote} />
+            <>
+              <NoteBody note={note.data} titles={titles} onOpen={openNote} />
+              {notePageUrl(note.data) && (
+                <FullPage note={note.data} url={notePageUrl(note.data)!} onSaved={() => setReload((n) => n + 1)} />
+              )}
+            </>
           ) : note.status === "missing" || note.status === "error" ? (
             <p data-ref="note-missing" className="mt-4 text-[13px] leading-5 text-plane-muted">
               {note.status === "missing" ? "This note is no longer in the vault." : "Couldn't open this note."}
