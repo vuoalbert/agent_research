@@ -4,15 +4,17 @@ import { FileText } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { Button } from "@/components/ui/button";
 import { selectChatSources, useAgentStore, type Source } from "@/lib/agent-store";
+import { cn } from "@/lib/utils";
 
 /**
  * The Knowledge base panel: every source Claude's searches turned up in the
  * active chat, de-duplicated by URL in the order they were first found — a
  * source list in the manner of NotebookLM's, set in this app's light theme.
- * Each row is a link out to the page. The panel itself scrolls (its section
- * hides the scrollbar), so the list needs no scroller of its own.
+ * Each row is a link out to the page. The heading stays put: the component
+ * fills the panel and only the list below it scrolls (scrollbar hidden).
  */
 
 /** a URL's host without the `www.`, or the URL itself if it does not parse */
@@ -92,8 +94,8 @@ export function KnowledgeBase({ titleId }: { titleId: string }) {
   const count = sources.length;
 
   return (
-    <>
-      <div className="flex items-baseline justify-between gap-2">
+    <div data-kb="root" className="flex h-full min-h-0 flex-col">
+      <div data-kb="header" className="flex shrink-0 items-baseline justify-between gap-2">
         <h2 id={titleId} className="text-[13px] leading-5 font-semibold text-plane-ink">
           Knowledge base
         </h2>
@@ -107,12 +109,14 @@ export function KnowledgeBase({ titleId }: { titleId: string }) {
           <p className="text-[13px] leading-5 text-plane-muted">Sources Claude finds will appear here</p>
         </div>
       ) : (
-        <ul aria-label="Sources" className="mt-2 flex flex-col">
-          {sources.map((source) => (
-            <SourceRow key={source.url} source={source} />
-          ))}
-        </ul>
+        <div data-kb="scroll" className={cn("-mx-4 mt-2 min-h-0 flex-1 overflow-y-auto px-4", NO_SCROLLBAR)}>
+          <ul aria-label="Sources" className="flex flex-col">
+            {sources.map((source) => (
+              <SourceRow key={source.url} source={source} />
+            ))}
+          </ul>
+        </div>
       )}
-    </>
+    </div>
   );
 }
