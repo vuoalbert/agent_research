@@ -82,6 +82,43 @@ describe("AiThread — tool rows", () => {
     for (const row of rows) expect(row.textContent).not.toMatch(/source/);
   });
 
+  it("shows a cross-reference as a Scale row with its topic and no counts", () => {
+    const { container } = render(
+      <AiThread
+        messages={messages(
+          [
+            {
+              id: "x1",
+              name: "Cross-reference",
+              action: "crossref",
+              query: "Minecraft sales and players",
+              status: "done",
+              crossref: {
+                claims: [
+                  {
+                    id: "C1",
+                    text: "Sold 300M",
+                    sources: [
+                      { url: "https://a.com", stance: "supports", quote: "300M" },
+                      { url: "https://b.com", stance: "contradicts", quote: "238M" },
+                    ],
+                  },
+                ],
+                relations: [{ a: "https://a.com", b: "https://b.com", kind: "conflicts", claims: ["C1"] }],
+              },
+            },
+          ],
+          "Done.",
+        )}
+      />,
+    );
+    const row = container.querySelector<HTMLElement>('[data-ai="tool"]')!;
+    expect(row.dataset.action).toBe("crossref");
+    expect(row.querySelector('[data-icon="scale"]')).not.toBeNull();
+    expect(row.textContent).toBe("Cross-referenceMinecraft sales and players");
+    expect(row.textContent).not.toMatch(/\d/);
+  });
+
   it("renders an old assistant turn with no tools as before", () => {
     const { container } = render(<AiThread messages={messages(undefined, "hello")} />);
     expect(container.querySelector('[data-ai="tool"]')).toBeNull();

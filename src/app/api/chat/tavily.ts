@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import { tavily } from "@tavily/core";
 import { z } from "zod";
 
@@ -50,7 +50,22 @@ const text = (value: string, isError = false) => ({
   ...(isError ? { isError: true } : {}),
 });
 
-export function createTavilyServer(onActivity: (activity: ToolActivity) => void) {
+/** a page's text as a search (excerpt) or a read (full) returned it */
+export type PageSeen = { url: string; title: string; text: string; full: boolean };
+
+export function createTavilyServer(
+  onActivity: (activity: ToolActivity) => void,
+  {
+    onPages,
+    tools: extraTools = [],
+  }: {
+    /** every page a search or read returned, for the request's research log */
+    onPages?: (pages: PageSeen[]) => void;
+    /** further tools on the same `research` server (cross_reference) */
+    // `any`: the SDK types its own tools list this way
+    tools?: SdkMcpToolDefinition<any>[];
+  } = {},
+) {
   return createSdkMcpServer({
     name: TAVILY_SERVER,
     version: "1.0.0",
@@ -77,6 +92,9 @@ export function createTavilyServer(onActivity: (activity: ToolActivity) => void)
               maxResults: MAX_RESULTS,
             });
             const results = response.results.slice(0, MAX_RESULTS);
+            onPages?.(
+              results.map((r) => ({ url: r.url, title: r.title || r.url, text: r.content ?? "", full: false })),
+            );
             onActivity({
               id,
               status: "done",
@@ -128,6 +146,9 @@ export function createTavilyServer(onActivity: (activity: ToolActivity) => void)
             });
             const pages = response.results ?? [];
             const failed = response.failedResults ?? [];
+            onPages?.(
+              pages.map((p) => ({ url: p.url, title: p.title || p.url, text: p.rawContent ?? "", full: true })),
+            );
             onActivity({
               id,
               status: "done",
@@ -153,6 +174,7 @@ export function createTavilyServer(onActivity: (activity: ToolActivity) => void)
           }
         },
       ),
+      ...extraTools,
     ],
   });
 }

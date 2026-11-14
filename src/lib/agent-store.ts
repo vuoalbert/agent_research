@@ -2,6 +2,12 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
+import { mergeCrossrefs, type Crossref } from "./crossref";
+import { sourceKey } from "./source-key";
+
+export { sourceKey };
+export type { Claim, ClaimSource, Crossref, Relation, Stance } from "./crossref";
+
 /**
  * agent-store — the shared local store behind the AI app.
  *
@@ -53,11 +59,14 @@ export type Source = { title: string; url: string };
 export type ToolCall = {
   id: string;
   name: string;
-  /** "read" for a page read (tavily_extract); absent for a search, and on chats saved before reads */
-  action?: "read";
+  /** "read" for a page read (tavily_extract), "crossref" for a cross_reference;
+   *  absent for a search, and on chats saved before reads */
+  action?: "read" | "crossref";
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
+  /** a cross_reference's claims and source↔source relations */
+  crossref?: Crossref;
 };
 
 export type Message = {
@@ -455,8 +464,8 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
 
 /** the route's `tool` frame: a call starting, or one it started ending */
 type ToolEvent =
-  | { id: string; name: string; action?: "read"; query: string; status: "running" }
-  | { id: string; status: "done"; sources?: Source[] }
+  | { id: string; name: string; action?: ToolCall["action"]; query: string; status: "running" }
+  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref }
   | { id: string; status: "error" };
 
 /** fold one `tool` frame into a turn's calls: a start appends, an end updates in place */
@@ -469,7 +478,7 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
       {
         id: event.id,
         name: event.name,
-        ...(event.action === "read" ? { action: "read" as const } : {}),
+        ...(event.action === "read" || event.action === "crossref" ? { action: event.action } : {}),
         query: event.query,
         status: "running",
       },
@@ -479,7 +488,12 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
     call.id !== event.id
       ? call
       : event.status === "done"
-        ? { ...call, status: "done", sources: event.sources ?? [] }
+        ? {
+            ...call,
+            status: "done",
+            sources: event.sources ?? [],
+            ...(event.crossref ? { crossref: event.crossref } : {}),
+          }
         : { ...call, status: "error" },
   );
 }
@@ -497,23 +511,6 @@ function updateTools(chatId: string, messageId: string, update: (tools: ToolCall
     },
   });
   return true;
-}
-
-/**
- * The key two URLs share when they are the same page: no scheme, no `www.`,
- * lower-case host, no trailing slash, no fragment. Search and read often name
- * one page both ways (`https://www.x.com/a/` vs `http://x.com/a`).
- */
-export function sourceKey(url: string): string {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase().replace(/^www\./, "");
-    const port = u.port ? `:${u.port}` : "";
-    const path = u.pathname.replace(/\/+$/, "");
-    return `${host}${port}${path}${u.search}`;
-  } catch {
-    return url.trim().replace(/\/+$/, "");
-  }
 }
 
 /**
@@ -538,13 +535,36 @@ export function selectChatSources(messages: readonly Message[] | undefined): Sou
   return sources;
 }
 
+/**
+ * Every cross-reference a chat ran, as one: claims de-duplicated by their
+ * normalised text, relations derived afresh over the merged claims. Empty for
+ * chats without one, and for turns saved before cross-referencing.
+ */
+export function selectChatCrossref(messages: readonly Message[] | undefined): Crossref {
+  const results: Crossref[] = [];
+  for (const message of messages ?? []) {
+    for (const call of Array.isArray(message?.tools) ? message.tools : []) {
+      if (call?.crossref && Array.isArray(call.crossref.claims)) results.push(call.crossref);
+    }
+  }
+  return mergeCrossrefs(results);
+}
+
+/** the most chat sources one request carries (the route's cap) */
+export const MAX_REQUEST_SOURCES = 60;
+
 /** Stop the reply in flight for a chat, keeping whatever text already arrived. */
 function stopStreaming(chatId: string) {
   inFlight.get(chatId)?.abort();
 }
 
 async function streamReply(chatId: string, replyId: string) {
-  const history = (getSnapshot().messages[chatId] ?? [])
+  const turns = getSnapshot().messages[chatId] ?? [];
+  // the chat's sources so far, most recent 60, for cross_reference to check
+  const sources = selectChatSources(turns)
+    .filter((source) => /^https?:\/\//i.test(source.url))
+    .slice(-MAX_REQUEST_SOURCES);
+  const history = turns
     .filter((turn) => turn.content !== "" || turn.id !== replyId)
     .map(({ role, content }) => ({ role, content }));
 
@@ -557,7 +577,7 @@ async function streamReply(chatId: string, replyId: string) {
     const response = await fetch(CHAT_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({ messages: history, sources }),
       signal: controller.signal,
     });
     if (!response.ok || !response.body) throw new Error(`chat route returned ${response.status}`);

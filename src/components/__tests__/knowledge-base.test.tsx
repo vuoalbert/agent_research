@@ -91,6 +91,61 @@ describe("Knowledge base panel", () => {
     expect(within(panel).getByText("Sources Claude finds will appear here")).toBeTruthy();
   });
 
+  it("shows the chat's claims above the sources, ✓ and ✗ hosts with quotes on hover", () => {
+    saveChatWithSources();
+    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY)!);
+    saved.messages.c1[1].tools.push({
+      id: "x1",
+      name: "Cross-reference",
+      action: "crossref",
+      query: "marble",
+      status: "done",
+      crossref: {
+        claims: [
+          {
+            id: "C1",
+            text: "Marble launched in 2025.",
+            sources: [
+              { url: "https://www.worldlabs.ai/blog/marble", stance: "supports", quote: "launched in 2025" },
+              { url: "https://en.wikipedia.org/wiki/Marble_(app)", stance: "contradicts", quote: "released in 2026" },
+              { url: "https://example.com/m", stance: "mentions", quote: "Marble" },
+            ],
+          },
+        ],
+        relations: [],
+      },
+    });
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    const panel = openKnowledgeBase();
+
+    const claims = panel.querySelector('[data-kb="claims"]') as HTMLElement;
+    expect(claims).not.toBeNull();
+    // inside the scrolling area, under the fixed header
+    expect(claims.closest('[data-kb="scroll"]')).not.toBeNull();
+    expect(panel.querySelector('[data-kb="header"]')!.contains(claims)).toBe(false);
+    const row = claims.querySelector("[data-claim]") as HTMLElement;
+    expect(row.hasAttribute("data-conflict")).toBe(true);
+    expect(within(row).getByText("Marble launched in 2025.")).toBeTruthy();
+    const chips = [...row.querySelectorAll<HTMLElement>("[data-stance]")];
+    expect(chips.map((c) => [c.dataset.stance, c.textContent])).toEqual([
+      ["supports", "✓Supports:worldlabs.ai"],
+      ["contradicts", "✗Contradicts:en.wikipedia.org"],
+    ]);
+    expect(chips[1].getAttribute("title")).toBe("“released in 2026”\nen.wikipedia.org");
+    expect(chips[1].className).toContain("text-destructive");
+    expect(chips[0].className).not.toContain("destructive");
+    // the sources list follows, unchanged
+    const list = within(panel).getByRole("list", { name: "Sources" });
+    expect(claims.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(list).getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("shows no Claims section for a chat without a cross-reference", () => {
+    saveChatWithSources();
+    const panel = openKnowledgeBase();
+    expect(panel.querySelector('[data-kb="claims"]')).toBeNull();
+  });
+
   it("leaves the other panels as just their names", () => {
     saveChatWithSources();
     render(<SideTabs />);

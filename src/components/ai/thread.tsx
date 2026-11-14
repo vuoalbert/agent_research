@@ -38,7 +38,7 @@
  *   Reduced motion never glides.
  */
 
-import { Wrench } from "lucide-react";
+import { Scale, Wrench } from "lucide-react";
 import {
   AnimatePresence,
   animate,
@@ -214,7 +214,12 @@ function ToolRow({ call }: { call: ToolCall }) {
         call.status === "running" && "motion-safe:animate-pulse",
       )}
     >
-      <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      {/* a cross-reference weighs the sources against each other */}
+      {call.action === "crossref" || call.name === "Cross-reference" ? (
+        <Scale aria-hidden data-icon="scale" size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      ) : (
+        <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      )}
       <span className="shrink-0 font-medium text-[var(--ai-ink)]">{call.name}</span>
       <span className="min-w-0 truncate text-[var(--ai-muted)]">{detail}</span>
       {call.status === "error" && (

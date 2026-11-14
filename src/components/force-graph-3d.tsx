@@ -15,12 +15,14 @@ import {
   type PageCandidate,
 } from "@/components/graph-page-panel";
 import { useAgentStore } from "@/lib/agent-store";
+import { CROSSREF_LINK_STYLE } from "@/lib/crossref-links";
 import { useReduced } from "@/lib/motion-tokens";
 import {
   buildResearchGraph,
   countPages,
   graphSignature,
   type ResearchGraph,
+  type ResearchLink,
   type ResearchLinkKind,
   type ResearchNode,
   type ResearchNodeKind,
@@ -59,13 +61,17 @@ export type LinkStyle = {
   color: string;
   /** 0 draws a hairline; more draws a tube that wide */
   width: number;
-  /** particles drifting along the link, source → target */
+  /** particles drifting along the link, source → target (none under reduced motion) */
   particles: number;
+  particleWidth?: number;
+  particleSpeed?: number;
 };
 /**
  * One entry per link kind — a new kind (say, pages that agree or conflict)
  * adds its row here. Greys for the research trail; the one accent, a muted
- * blue, for pages read side by side. Red is kept for future "conflicts" links.
+ * blue, for pages read side by side. Red is for `conflicts` only: pages that
+ * contradict each other, with a few slow particles drifting along the link.
+ * `agrees` is solid grey, its width per link (more shared claims, wider).
  */
 export const LINK_STYLE: Record<ResearchLinkKind, LinkStyle> = {
   asked: { color: "#A3A6AB", width: 0.6, particles: 0 },
@@ -73,8 +79,18 @@ export const LINK_STYLE: Record<ResearchLinkKind, LinkStyle> = {
   found: { color: "#D6D7D9", width: 0, particles: 0 },
   read: { color: "#A3A6AB", width: 0.35, particles: 0 },
   "cross-ref": { color: "rgba(107, 138, 253, 0.7)", width: 0.7, particles: 0 },
+  agrees: { color: CROSSREF_LINK_STYLE.agrees.color, width: CROSSREF_LINK_STYLE.agrees.width, particles: 0 },
+  conflicts: {
+    color: CROSSREF_LINK_STYLE.conflicts.color,
+    width: CROSSREF_LINK_STYLE.conflicts.width,
+    particles: CROSSREF_LINK_STYLE.conflicts.particles,
+    particleWidth: CROSSREF_LINK_STYLE.conflicts.particleWidth,
+    particleSpeed: CROSSREF_LINK_STYLE.conflicts.particleSpeed,
+  },
 };
 const linkStyle = (link: object) => LINK_STYLE[(link as { kind: ResearchLinkKind }).kind];
+/** a link's own width (agrees grows with its claims), else its kind's */
+const linkWidthOf = (link: object) => (link as ResearchLink).width ?? linkStyle(link).width;
 /** the least distance a click parks the camera from a chat or a search; it
  *  backs further out if a page would still be within PAGE_FAR */
 const FLY_DISTANCE: Record<Exclude<ResearchNodeKind, "page">, number> = { chat: 320, search: 260 };
@@ -129,6 +145,9 @@ export function ForceGraph3D({ className }: { className?: string }) {
 
   useEffect(() => {
     reduceRef.current = reduce;
+    // re-read the particle counts: conflicts drift only with motion allowed
+    const graph = liveRef.current?.graph;
+    if (graph) graph.linkDirectionalParticles(graph.linkDirectionalParticles());
   }, [reduce]);
 
   useEffect(() => {
@@ -176,11 +195,16 @@ export function ForceGraph3D({ className }: { className?: string }) {
         .nodeOpacity(0.95)
         .nodeResolution(12)
         .linkColor((link) => linkStyle(link).color)
-        .linkWidth((link) => linkStyle(link).width)
+        .linkWidth(linkWidthOf)
         .linkOpacity(0.9)
-        .linkDirectionalParticles((link) => linkStyle(link).particles)
+        /* agrees / conflicts: the claim(s) with ✓ / ✗ hosts, escaped upstream */
+        .linkLabel((link) => (link as ResearchLink).label ?? "")
+        .linkDirectionalParticles((link) => (reduceRef.current ? 0 : linkStyle(link).particles))
         .linkDirectionalParticleColor((link) => linkStyle(link).color)
-        .linkDirectionalParticleWidth((link) => Math.max(1.2, linkStyle(link).width * 2));
+        .linkDirectionalParticleSpeed((link) => linkStyle(link).particleSpeed ?? 0.01)
+        .linkDirectionalParticleWidth(
+          (link) => linkStyle(link).particleWidth ?? Math.max(1.2, linkWidthOf(link) * 2),
+        );
       live = { graph, signature: "" };
       liveRef.current = live;
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Chat, Message, ToolCall } from "@/lib/agent-store";
+import type { Chat, Crossref, Message, ToolCall } from "@/lib/agent-store";
+import { CROSSREF_LINK_STYLE, agreeWidth } from "@/lib/crossref-links";
 import { buildResearchGraph, chatNodeId, countPages, graphSignature, pageNodeId } from "@/lib/research-graph";
 
 const chat = (id: string, title: string, extra: Partial<Chat> = {}): Chat => ({
@@ -27,6 +28,20 @@ const read = (id: string, urls: string[]): ToolCall => ({
 });
 const turn = (id: string, tools: ToolCall[]): Message => ({ id, role: "assistant", content: "", createdAt: 0, tools });
 const ask = (id: string): Message => ({ id, role: "user", content: "q", createdAt: 0 });
+
+const xref = (id: string, crossref: Crossref): ToolCall => ({
+  id,
+  name: "Cross-reference",
+  action: "crossref",
+  query: "topic",
+  status: "done",
+  crossref,
+});
+const claim = (id: string, text: string, stances: Record<string, "supports" | "contradicts" | "mentions">) => ({
+  id,
+  text,
+  sources: Object.entries(stances).map(([url, stance]) => ({ url, stance, quote: `${stance} ${id}` })),
+});
 
 const kinds = (graph: ReturnType<typeof buildResearchGraph>, kind: string) =>
   graph.links.filter((l) => l.kind === kind).map((l) => `${l.source} -> ${l.target}`);
@@ -106,6 +121,100 @@ describe("buildResearchGraph", () => {
     // the read's empty title did not replace the search's
     expect(graph.nodes.find((n) => n.id === "page:a.com/1")?.label).toBe("Title of https://a.com/1");
     expect(graph.nodes.find((n) => n.id === "page:b.com/2")?.label).toBe("https://b.com/2");
+  });
+
+  it("adds agrees / conflicts page links from every live chat's cross-references", () => {
+    const A = "https://a.com/1";
+    const B = "https://b.com/2";
+    const C = "https://c.com/3";
+    const graph = buildResearchGraph([chat("x", "X"), chat("y", "Y"), chat("z", "Z", { archived: true })], {
+      x: [
+        turn("m1", [
+          search("s1", "q", [A, B, C]),
+          read("r1", [A, B, C]),
+          xref("x1", {
+            claims: [
+              claim("C1", "Sold 300M", { [A]: "supports", [B]: "supports", [C]: "contradicts" }),
+              claim("C2", "Players <140M>", { [A]: "supports", [B]: "supports" }),
+            ],
+            relations: [],
+          }),
+        ]),
+      ],
+      // another chat agrees on a third claim over the same pair; it is merged in
+      y: [turn("m2", [search("s2", "q2", [A, B]), xref("x2", { claims: [claim("C1", "Launched 2011", { [A]: "supports", [B]: "supports" })], relations: [] })])],
+      // archived: ignored
+      z: [turn("m3", [search("s3", "q3", [B, C]), xref("x3", { claims: [claim("C1", "Other", { [B]: "supports", [C]: "supports" })], relations: [] })])],
+    });
+
+    const agrees = graph.links.filter((l) => l.kind === "agrees");
+    expect(agrees.map((l) => `${l.source} -> ${l.target}`)).toEqual(["page:a.com/1 -> page:b.com/2"]);
+    expect(agrees[0].claims!.map((c) => c.text)).toEqual(["Sold 300M", "Players <140M>", "Launched 2011"]);
+    expect(agrees[0].width).toBe(agreeWidth(3));
+    expect(agrees[0].label).toContain("Players &lt;140M&gt;<br>✓ a.com, b.com");
+
+    expect(kinds(graph, "conflicts")).toEqual(["page:a.com/1 -> page:c.com/3", "page:b.com/2 -> page:c.com/3"]);
+    const conflict = graph.links.find((l) => l.kind === "conflicts")!;
+    expect(conflict.label).toBe("Sold 300M<br>✓ a.com, b.com<br>✗ c.com");
+    // agrees / conflicts replaced the read's cross-ref links on the same pairs
+    expect(kinds(graph, "cross-ref")).toEqual([]);
+    // one link per pair still
+    const pairs = graph.links.map((l) => [l.source, l.target].sort().join("|"));
+    expect(new Set(pairs).size).toBe(pairs.length);
+    expect(CROSSREF_LINK_STYLE.conflicts.color).not.toBe(CROSSREF_LINK_STYLE.agrees.color);
+  });
+
+  it("draws a pair that agrees on one claim and conflicts on another as one conflicts link", () => {
+    const A = "https://a.com/1";
+    const B = "https://b.com/2";
+    const graph = buildResearchGraph([chat("x", "X")], {
+      x: [
+        turn("m1", [
+          search("s1", "q", [A, B]),
+          xref("x1", {
+            claims: [
+              claim("C1", "Sold 300M", { [A]: "supports", [B]: "supports" }),
+              claim("C2", "200M players", { [A]: "supports", [B]: "contradicts" }),
+            ],
+            relations: [],
+          }),
+        ]),
+      ],
+    });
+    const pageLinks = graph.links.filter((l) => l.kind === "agrees" || l.kind === "conflicts");
+    expect(pageLinks).toHaveLength(1);
+    expect(pageLinks[0].kind).toBe("conflicts");
+    expect(pageLinks[0].claims!.map((c) => c.text).sort()).toEqual(["200M players", "Sold 300M"]);
+    // a new claim on the same pair changes the signature, so the graph re-styles
+    const before = graphSignature(graph);
+    const more = buildResearchGraph([chat("x", "X")], {
+      x: [
+        turn("m1", [
+          search("s1", "q", [A, B]),
+          xref("x1", {
+            claims: [
+              claim("C1", "Sold 300M", { [A]: "supports", [B]: "supports" }),
+              claim("C2", "200M players", { [A]: "supports", [B]: "contradicts" }),
+              claim("C3", "2011", { [A]: "supports", [B]: "supports" }),
+            ],
+            relations: [],
+          }),
+        ]),
+      ],
+    });
+    expect(graphSignature(more)).not.toBe(before);
+  });
+
+  it("skips relations to pages the graph does not have", () => {
+    const graph = buildResearchGraph([chat("x", "X")], {
+      x: [
+        turn("m1", [
+          search("s1", "q", ["https://a.com/1"]),
+          xref("x1", { claims: [claim("C1", "c", { "https://a.com/1": "supports", "https://gone.com": "contradicts" })], relations: [] }),
+        ]),
+      ],
+    });
+    expect(graph.links.filter((l) => l.kind === "conflicts")).toEqual([]);
   });
 
   it("links a read with no search before it to the chat", () => {

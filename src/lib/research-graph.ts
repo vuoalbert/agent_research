@@ -1,4 +1,5 @@
-import { sourceKey, type Chat, type Message, type ToolCall } from "@/lib/agent-store";
+import { selectChatCrossref, sourceKey, type Chat, type Claim, type Message, type ToolCall } from "@/lib/agent-store";
+import { crossrefLinks } from "@/lib/crossref-links";
 
 /**
  * research-graph — the Force graph's data, built from the chat store.
@@ -19,13 +20,18 @@ import { sourceKey, type Chat, type Message, type ToolCall } from "@/lib/agent-s
  *   read      the search a read followed (or the chat, if it came first) →
  *             each page the read opened
  *   cross-ref page ↔ page, for every pair of pages one read opened together
+ *   agrees    page ↔ page, both support a claim a cross_reference found (every
+ *             live chat's cross-references merged); wider per shared claim
+ *   conflicts page ↔ page, one supports a claim the other contradicts
  *
  * At most one link per pair of nodes: the first reason wins (a page that a
- * search found and the next read opened stays a `found` link).
+ * search found and the next read opened stays a `found` link) — except that
+ * agrees / conflicts replace a `cross-ref` pair, and a pair that both agrees
+ * and conflicts is drawn as one `conflicts` link carrying every claim.
  */
 
 export type ResearchNodeKind = "chat" | "search" | "page";
-export type ResearchLinkKind = "asked" | "built-on" | "found" | "read" | "cross-ref";
+export type ResearchLinkKind = "asked" | "built-on" | "found" | "read" | "cross-ref" | "agrees" | "conflicts";
 
 export type ResearchNode = {
   id: string;
@@ -42,6 +48,12 @@ export type ResearchLink = {
   kind: ResearchLinkKind;
   source: string;
   target: string;
+  /** agrees / conflicts: the claims behind the link */
+  claims?: Claim[];
+  /** agrees / conflicts: the hover label, each claim with ✓ / ✗ hosts (HTML) */
+  label?: string;
+  /** agrees: a width that grows with the shared claims */
+  width?: number;
 };
 
 export type ResearchGraph = { nodes: ResearchNode[]; links: ResearchLink[] };
@@ -148,12 +160,53 @@ export function buildResearchGraph(
     }
   }
 
+  /* ---------------------------------------- cross-reference relations */
+  const live = chats.filter((chat) => !chat.archived).flatMap((chat) => messages[chat.id] ?? []);
+  const byPair = new Map<string, ResearchLink>();
+  for (const relation of crossrefLinks(selectChatCrossref(live), { nodeId: pageNodeId, hasNode: (id) => nodes.has(id) })) {
+    const { source, target } = relation;
+    const pair = source < target ? `${source}|${target}` : `${target}|${source}`;
+    const existing = byPair.get(pair);
+    if (existing) {
+      // agree on one claim, conflict on another: one conflicts link with both
+      const claims = [...existing.claims!, ...relation.claims.filter((c) => !existing.claims!.includes(c))];
+      const conflicts = existing.kind === "conflicts" ? existing : relation;
+      byPair.set(pair, {
+        id: `conflicts:${pair}`,
+        kind: "conflicts",
+        source: conflicts.source,
+        target: conflicts.target,
+        claims,
+        label: [existing.label, relation.label].join("<br><br>"),
+      });
+      continue;
+    }
+    if (pairs.has(pair) && !links.has(`cross-ref:${pair}`)) continue;
+    byPair.set(pair, {
+      id: `${relation.kind}:${pair}`,
+      kind: relation.kind,
+      source,
+      target,
+      claims: relation.claims,
+      label: relation.label,
+      ...(relation.kind === "agrees" ? { width: relation.width } : {}),
+    });
+  }
+  for (const [pair, crossLink] of byPair) {
+    links.delete(`cross-ref:${pair}`);
+    pairs.add(pair);
+    links.set(crossLink.id, crossLink);
+  }
+
   return { nodes: [...nodes.values()], links: [...links.values()] };
 }
 
 /** ids and link keys in order — equal signatures mean the layout can stay as is */
 export function graphSignature(graph: ResearchGraph): string {
-  return `${graph.nodes.map((n) => n.id).join(",")}#${graph.links.map((l) => l.id).join(",")}`;
+  // a link's claim count is part of it: a new shared claim re-styles the link
+  return `${graph.nodes.map((n) => n.id).join(",")}#${graph.links
+    .map((l) => (l.claims ? `${l.id}/${l.claims.length}` : l.id))
+    .join(",")}`;
 }
 
 export function countPages(graph: ResearchGraph): number {

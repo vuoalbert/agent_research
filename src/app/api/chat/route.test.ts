@@ -88,7 +88,7 @@ describe("POST /api/chat", () => {
     await readAll(response);
   });
 
-  it("asks Opus 5.5 at high effort, with only Tavily search and read and no repo settings", async () => {
+  it("asks Opus 5.5 at high effort, with only Tavily search, read and cross_reference and no repo settings", async () => {
     query.mockReturnValue(stream(delta("x")));
     await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
 
@@ -106,10 +106,15 @@ describe("POST /api/chat", () => {
     expect(options.mcpServers.research.tools.map((t: { name: string }) => t.name)).toEqual([
       "tavily_search",
       "tavily_extract",
+      "cross_reference",
     ]);
-    expect(options.allowedTools).toEqual(["mcp__research__tavily_search", "mcp__research__tavily_extract"]);
+    expect(options.allowedTools).toEqual([
+      "mcp__research__tavily_search",
+      "mcp__research__tavily_extract",
+      "mcp__research__cross_reference",
+    ]);
     expect(options.permissionMode).toBe("dontAsk");
-    expect(options.maxTurns).toBe(12);
+    expect(options.maxTurns).toBe(14);
     expect(options.includePartialMessages).toBe(true);
     // a single-turn ask goes over as itself, with no transcript preamble
     expect(prompt).toBe("hi");
@@ -126,6 +131,7 @@ describe("POST /api/chat", () => {
     expect(systemPrompt).toMatch(/primary or official/i);
     expect(systemPrompt).toMatch(/do not mention how many sources/i);
     expect(systemPrompt).toMatch(/don't need outside facts/i);
+    expect(systemPrompt).toMatch(/call cross_reference once/i);
   });
 
   it("streams a page read as a 'read' tool event and hands Claude each page, capped", async () => {
@@ -308,6 +314,75 @@ describe("POST /api/chat", () => {
     const body = await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
     expect(body).toContain("event: error");
     expect(body).toContain("Claude Code is not logged in");
+  });
+
+  it("accepts the chat's sources and rejects malformed ones", async () => {
+    query.mockReturnValue(stream(delta("x")));
+    const messages = [{ role: "user", content: "hi" }];
+    const ok = await post({ messages, sources: [{ title: "A", url: "https://a.com" }, { url: "http://b.com/x" }] });
+    expect(ok.status).toBe(200);
+    await readAll(ok);
+    expect((await post({ messages, sources: "nope" })).status).toBe(400);
+    expect((await post({ messages, sources: [{ title: "x", url: "javascript:alert(1)" }] })).status).toBe(400);
+    expect((await post({ messages, sources: [{ title: "x" }] })).status).toBe(400);
+    const tooMany = Array.from({ length: 61 }, (_, i) => ({ title: `${i}`, url: `https://s${i}.com` }));
+    expect((await post({ messages, sources: tooMany })).status).toBe(400);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands cross_reference the chat's sources plus this request's finds", async () => {
+    search.mockResolvedValue({
+      results: [{ title: "New", url: "https://new.example.com/a", content: "Sold 238 million. ".repeat(10) }],
+    });
+    extract.mockResolvedValue({
+      results: [
+        { url: "https://a.com", title: "A", rawContent: "Sold 300 million. ".repeat(10) },
+        { url: "https://new.example.com/a", title: "New", rawContent: "Sold 238 million. ".repeat(10) },
+      ],
+      failedResults: [],
+    });
+    let toolText = "";
+    const analysis = {
+      claims: [
+        {
+          id: "C1",
+          text: "Minecraft sold 300 million copies.",
+          sources: [
+            { source: "S1", stance: "supports", quote: "Sold 300 million." },
+            { source: "S2", stance: "contradicts", quote: "Sold 238 million." },
+          ],
+        },
+      ],
+    };
+    query.mockImplementation((args: { options: { outputFormat?: unknown } }) =>
+      args.options.outputFormat
+        ? // the nested, structured analysis call
+          (async function* () {
+            yield { type: "result", subtype: "success", result: "", structured_output: analysis };
+          })()
+        : (async function* () {
+            await searchHandler().handler({ query: "minecraft sales" }, {});
+            const crossref = options().mcpServers.research.tools[2] as { name: string; handler: Handler };
+            expect(crossref.name).toBe("cross_reference");
+            toolText = (await crossref.handler({ topic: "sales" } as never, {})).content[0].text;
+            yield delta("ok");
+          })(),
+    );
+    const options = () => query.mock.calls[0][0].options;
+    const body = await readAll(
+      await post({ messages: [{ role: "user", content: "hi" }], sources: [{ title: "A", url: "https://a.com" }] }),
+    );
+    expect(extract).toHaveBeenCalledWith(["https://a.com", "https://new.example.com/a"], {
+      extractDepth: "basic",
+      format: "text",
+    });
+    expect(toolText).toContain('✗ new.example.com ("Sold 238 million.")');
+    const frames = [...body.matchAll(/event: tool\ndata: (.*)/g)].map((m) => JSON.parse(m[1]));
+    const start = frames.find((f) => f.name === "Cross-reference");
+    expect(start).toMatchObject({ action: "crossref", query: "sales", status: "running" });
+    expect(frames.find((f) => f.id === start.id && f.status === "done").crossref.relations).toEqual([
+      { a: "https://a.com", b: "https://new.example.com/a", kind: "conflicts", claims: ["C1"] },
+    ]);
   });
 
   it("rejects a body with no turns in it", async () => {

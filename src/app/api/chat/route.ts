@@ -1,6 +1,10 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
-import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } from "./tavily";
+import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
+import { parseSources } from "./sources";
+import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type Source } from "./tavily";
+
+const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
 
 /**
  * POST /api/chat — one turn of Agent Research, streamed.
@@ -12,12 +16,15 @@ import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } fr
  * whatever `claude` is already logged in as on this machine, which is why this
  * only works locally and why a deploy of this route would need rethinking.
  *
- * Request:  { messages: { role: "user" | "assistant", content: string }[] }
+ * Request:  { messages: { role: "user" | "assistant", content: string }[],
+ *            sources?: { title: string, url: string }[] }   (the chat's sources, for cross_reference)
  * Response: text/event-stream of
  *             event: delta   data: {"text": "..."}
  *             event: tool    data: {"id","name":"Tavily","action"?:"read","query","status":"running"}
  *                            data: {"id","status":"done","sources":[{"title","url"}]}
  *                            data: {"id","status":"error","message"}
+ *                            data: {"id","name":"Cross-reference","action":"crossref","query","status":"running"}
+ *                              → {"id","status":"done","crossref":{"claims","relations"}}
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -37,7 +44,7 @@ const MODEL = "claude-opus-5-5";
 const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
 /** enough for a few searches, a couple of reads, and the answer after them */
-const MAX_AGENT_TURNS = 12;
+const MAX_AGENT_TURNS = 14;
 const SYSTEM_PROMPT = [
   "You are Agent Research, an AI assistant. Be concise.",
   "",
@@ -47,6 +54,8 @@ const SYSTEM_PROMPT = [
   "3. Cross-reference the key facts (numbers, dates, names, claims) across at least two sources.",
   "4. Say where the sources agree, and flag any disagreement explicitly: which source says what.",
   "5. When sources conflict, prefer the primary or official one and say why.",
+  "After gathering and reading sources for a factual question, call cross_reference once to check all sources against each other before writing.",
+  "Report the agreements and conflicts its result shows.",
   "Cite inline by source name with a link, e.g. [Microsoft](https://news.microsoft.com/...).",
   "Do not mention how many sources you read or searches you ran.",
   "Keep the answer natural and to the point. Questions that don't need outside facts get a direct answer, no research.",
@@ -81,13 +90,19 @@ function buildPrompt(turns: Turn[]): string {
 
 export async function POST(request: Request) {
   let turns: Turn[];
+  let chatSources: Source[];
   try {
-    const body = (await request.json()) as { messages?: unknown };
+    const body = (await request.json()) as { messages?: unknown; sources?: unknown };
     const messages = Array.isArray(body.messages) ? body.messages.filter(isTurn) : [];
     if (messages.length === 0) {
       return Response.json({ error: "messages must be a non-empty array" }, { status: 400 });
     }
+    const sources = parseSources(body.sources);
+    if (!sources) {
+      return Response.json({ error: "sources must be an array of at most 60 http(s) sources" }, { status: 400 });
+    }
     turns = messages;
+    chatSources = sources;
   } catch {
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
@@ -104,6 +119,11 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const report = (activity: unknown) => {
+        if (!abort.signal.aborted) send(controller, "tool", activity);
+      };
+      // the sources cross_reference checks: the chat's, then this request's finds
+      const log = createResearchLog(chatSources);
       try {
         const run = query({
           prompt: buildPrompt(turns),
@@ -119,11 +139,12 @@ export async function POST(request: Request) {
             tools: [],
             settingSources: [],
             mcpServers: {
-              [TAVILY_SERVER]: createTavilyServer((activity) => {
-                if (!abort.signal.aborted) send(controller, "tool", activity);
+              [TAVILY_SERVER]: createTavilyServer(report, {
+                onPages: log.recordPages,
+                tools: [createCrossReferenceTool({ log, onActivity: report, signal: abort.signal })],
               }),
             },
-            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID],
+            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,
