@@ -1,9 +1,10 @@
 <!doctype html>
-<!-- Ported from nyc-world by menonsprithvi-web (index.html @ e4c0f97), nearly verbatim.
+<!-- Ported from nyc-world by menonsprithvi-web (index.html @ a4e4a44), nearly verbatim.
      Agent Research changes: the world and its labels come from the chat's World
      Labs record (/api/world/chat/<chatId>), labels are saved back there, a label's
-     own research source is pinned first on its screens, the routes live under
-     /api/world/ (ask, page, sources, read, status), and Escape (when it is not
+     own research source is pinned first on its screens, Telem calls carry the
+     chat id (its Telem session), the routes live under
+     /api/world/ (ask, page, sources, read, status, watch), and Escape (when it is not
      releasing the mouse) asks the app to close the view. -->
 <html lang="en">
 <head>
@@ -142,6 +143,29 @@
                 backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
                 box-shadow: 0 0 0 1px var(--outline), 0 8px 24px rgba(0,0,0,.45); }
     .hud-pill[hidden] { display: none; }
+
+    /* Search trace: what Telem did for the last search (screen-pinned) */
+    #trace { position: fixed; left: 16px; bottom: 16px; z-index: 3; width: 430px; max-height: 46vh; overflow: auto;
+             padding: 12px 14px; border-radius: 20px; background: var(--surface); color: var(--on-surface);
+             backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+             box-shadow: 0 0 0 1px var(--outline), 0 12px 32px rgba(0,0,0,.45); font: 400 12.5px/1.45 var(--font); }
+    #trace[hidden] { display: none; }
+    #trace h3 { margin: 0 0 6px; font: 500 14px var(--font); display: flex; justify-content: space-between; gap: 8px; }
+    #trace h3 span { color: var(--on-surface-var); font-weight: 400; }
+    #trace .row { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; padding: 6px 0; border-top: 1px solid var(--outline); }
+    #trace .step { font-weight: 600; color: var(--primary); text-transform: capitalize; }
+    #trace .meta { color: var(--on-surface-var); }
+    #trace .num { text-align: right; white-space: nowrap; }
+    #trace .num b { color: #7ee2a0; }
+    #trace .foot { margin-top: 6px; color: var(--on-surface-var); }
+    .menu .watch { height: 36px; padding: 0 14px; border-radius: 18px; display: flex; align-items: center; gap: 6px;
+                   background: var(--surface-high); color: var(--on-surface); font: 500 14px var(--font); white-space: nowrap; }
+    .menu .watch.on { background: #0f5223; color: #c4f5cf; }
+    .menu .watch.hover { box-shadow: 0 0 0 3px var(--focus); }
+    .msg.trace { align-self: flex-start; background: none; color: var(--on-surface-var); font-size: 13px; padding: 2px 6px; }
+    .orb .badge { position: absolute; top: -6px; right: -6px; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 13px;
+                  display: grid; place-items: center; background: #e5484d; color: #fff; font: 700 14px var(--font); }
+    .orb { position: relative; }
     #close-hud { top: 18px; right: 18px; cursor: pointer; transition: background .12s; }
     #close-hud:hover { background: var(--surface-high); }
     #close-hud .x { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 18px;
@@ -172,6 +196,7 @@
   <div id="world-ui"></div>
   <div id="crosshair"></div>
   <div id="hint"></div>
+  <div id="trace" hidden></div>
   <div id="close-hud" class="hud-pill" hidden><span class="x"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span><span class="label">Close</span><kbd>X</kbd></div>
   <div id="status">Loading 3D world…</div>
 
@@ -335,6 +360,72 @@
       return m && !/^[A-Za-z_]+:/.test(decodeURIComponent(m[1])) ? decodeURIComponent(m[1]) : null;
     };
 
+    // ---------- Search trace panel ----------
+    const traceEl = document.getElementById("trace");
+    const STEP_ICON = { overview: "🌐", official: "🏛", research: "🎓", news: "📰", fetch: "📄" };
+    function showPlanTrace(m, title) {
+      if (!m?.trace) return;
+      traceEl.hidden = false;
+      traceEl.innerHTML = `<h3>Telem search plan <span>${esc(title)}</span></h3>` +
+        m.trace.map((t) => `<div class="row"><span class="step">${STEP_ICON[t.intent] ?? ""} ${esc(t.intent)}</span>
+          <span class="meta">${esc(t.note)}<br>${t.error ? `⚠ ${esc(t.error.slice(0, 80))}` : esc(t.providers.join(" + ") || "no results")}</span>
+          <span class="num">${(t.ms / 1000).toFixed(1)}s<br>${t.found} → <b>${t.kept}</b></span></div>`).join("") +
+        `<div class="foot">${m.total} unique results · ${m.dropped.length} dropped as untrusted · ${m.results.length} trusted kept · ${(m.ms / 1000).toFixed(1)}s total (steps run in parallel)</div>`;
+    }
+    function addChatTrace(t) {
+      traceEl.hidden = false;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.innerHTML = t.tool === "fetch"
+        ? `<span class="step">📄 fetch</span><span class="meta">${esc(new URL(t.url).hostname.replace(/^www\./, ""))} · ${esc(t.trust ?? "")}<br>${t.error ? "⚠ " + esc(t.error.slice(0, 80)) : "via " + esc(t.provider ?? "Telem")}</span><span class="num">${(t.ms / 1000).toFixed(1)}s<br>${t.chars ? Math.round(t.chars / 1000) + "k chars" : ""}</span>`
+        : `<span class="step">${STEP_ICON[t.intent] ?? "🔎"} ${esc(t.focus)}</span><span class="meta">“${esc(t.query)}”<br>${esc((t.providers ?? []).join(" + ") || "no results")}</span><span class="num">${(t.ms / 1000).toFixed(1)}s<br>${t.found} → <b>${t.kept}</b></span>`;
+      if (!traceEl.querySelector("h3.chat")) traceEl.insertAdjacentHTML("beforeend", `<h3 class="chat">Chat research via Telem <span>live</span></h3>`);
+      traceEl.append(row);
+      traceEl.scrollTop = traceEl.scrollHeight;
+    }
+
+    // ---------- Telem Monitors: watch a label's topic ----------
+    const WATCH_STORE = `world-watch-v1-${worldId}`;
+    const watches = JSON.parse(localStorage.getItem(WATCH_STORE) ?? "{}"); // label key → monitor id
+    const labelKey = (item) => `${item.data.text}|${item.data.position.join(",")}`;
+    const watchedId = (item) => watches[labelKey(item)] ?? null;
+    async function toggleWatch(item) {
+      const menu = item.cluster?.menu;
+      if (!menu || watchedId(item)) return botSay(item, "Already watching this topic — new trustworthy sources will show as a badge on the label's button.");
+      const topic = item.data.query ?? item.data.text;
+      menu.watchBtn.textContent = "👁 …";
+      try {
+        const res = await fetch("/api/world/watch", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query: `New, trustworthy information about ${topic}` }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        watches[labelKey(item)] = data.id;
+        localStorage.setItem(WATCH_STORE, JSON.stringify(watches));
+        menu.watchBtn.classList.add("on");
+        menu.watchBtn.textContent = "👁 Watching";
+        botSay(item, `Watching “${topic}” with a Telem Monitor (checks every hour for 7 days). New trustworthy sources will appear as a badge on this label's button.`);
+      } catch (e) {
+        menu.watchBtn.textContent = "👁 Watch";
+        botSay(item, `Couldn't start watching: ${e.message}`);
+      }
+    }
+    // Poll every watched label; show a red count on its button for new sources.
+    const newFinds = new Map(); // label key → results
+    async function pollWatches() {
+      for (const it of items) {
+        const id = watchedId(it);
+        if (!id) continue;
+        try {
+          const data = await (await fetch("/api/world/watch?id=" + encodeURIComponent(id))).json();
+          const fresh = data.new_results ?? [];
+          if (fresh.length) newFinds.set(labelKey(it), [...(newFinds.get(labelKey(it)) ?? []), ...fresh]);
+        } catch {}
+        const n = newFinds.get(labelKey(it))?.length ?? 0;
+        it.orb.el.querySelector(".badge")?.remove();
+        if (n) it.orb.el.insertAdjacentHTML("beforeend", `<span class="badge">${n}</span>`);
+      }
+    }
+
     // Telem: auto-routed web search, filtered to trustworthy sources on the
     // server. Returns URLs plus a summary of what Telem did.
     let telemOn = null;
@@ -342,11 +433,11 @@
       if (telemOn === null) telemOn = await fetch("/api/world/status").then((r) => r.json()).then((j) => !!j.telem).catch(() => false);
       if (!telemOn) return { urls: [], meta: null };
       try {
-        const res = await fetch("/api/world/sources?q=" + encodeURIComponent(query));
+        const res = await fetch("/api/world/sources?q=" + encodeURIComponent(query) + "&chat=" + encodeURIComponent(chatId));
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         for (const r of data.results) {
-          trustInfo.set(r.url, { label: r.trust.label, score: r.trust.score, provider: r.provider });
+          trustInfo.set(r.url, { label: r.trust.label, score: r.trust.score, provider: r.provider, intent: r.intent });
           titleCache.set(r.url, r.title);
         }
         return { urls: data.results.map((r) => r.url), meta: data };
@@ -450,7 +541,7 @@
     }
 
     async function readWithTelem(pageUrl) {
-      const res = await fetch("/api/world/read?url=" + encodeURIComponent(pageUrl));
+      const res = await fetch("/api/world/read?url=" + encodeURIComponent(pageUrl) + "&chat=" + encodeURIComponent(chatId));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       const host = new URL(data.url).hostname.replace(/^www\./, "");
@@ -549,7 +640,7 @@
       const pct = Math.round(info.score * 100);
       t.trustEl.className = "trust " + (info.score >= 0.85 ? "hi" : info.score >= 0.7 ? "" : "mid");
       t.trustEl.innerHTML = `${esc(info.label)} · <b>${pct}</b>`;
-      t.trustEl.title = info.provider ? `Found via Telem (${info.provider})` : "";
+      t.trustEl.title = info.provider ? `Found by Telem's ${info.intent ?? ""} search via ${info.provider}` : "";
     }
 
     const niceTitle = (u) => titleCache.get(u) ?? (oaId(u) ? "Paper" : decodeURIComponent((wikiTitle(u) ?? u).replace(/_/g, " ")));
@@ -725,7 +816,7 @@
       const el = document.createElement("div");
       el.className = "menu";
       el.innerHTML = `
-        <header><h2></h2><span class="x" data-action="close">${ICON.close}</span></header>
+        <header><h2></h2><span class="watch" data-action="watch">👁 Watch</span><span class="x" data-action="close">${ICON.close}</span></header>
         <div class="sub">Ask anything about the 6 pages · /pages &lt;topic&gt; to change them</div>
         <div class="log"></div>
         <div class="input-row"><input data-action="chat" placeholder="Ask about these pages…" /><span class="send" data-action="send">${ICON.send}</span></div>`;
@@ -738,7 +829,9 @@
         if (e.key === "Enter") sendChat(item);
         if (e.key === "Escape") input.blur();
       });
-      return addSurface(el, "menu", 480, 1.2, new THREE.Vector3(), { owner: item, input, log: el.querySelector(".log") });
+      const watchBtn = el.querySelector(".watch");
+      if (watchedId(item)) { watchBtn.classList.add("on"); watchBtn.textContent = "👁 Watching"; }
+      return addSurface(el, "menu", 480, 1.2, new THREE.Vector3(), { owner: item, input, watchBtn, log: el.querySelector(".log") });
     }
 
     function botSay(item, text) {
@@ -768,7 +861,7 @@
       // Skip repeats by title (OpenAlex sometimes lists one paper twice).
       // Up to 4 trusted web sources from Telem, then encyclopedia + papers so
       // every set keeps at least one cited article and one paper.
-      const order = [...pinned, ...web.urls.slice(0, 4)];
+      const order = [...pinned, ...web.urls.slice(0, 5)];
       for (let i = 0; i < 3; i++) order.push(wiki[i], papers[i]);
       order.push(...wiki.slice(3), ...papers.slice(3));
       const seen = new Set();
@@ -825,7 +918,7 @@
         const res = await fetch("/api/world/ask", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ question: text, pages, history: cluster.history }),
+          body: JSON.stringify({ question: text, pages, history: cluster.history, chatId }),
         });
         if (!res.ok || !res.body) throw new Error(res.status === 404 || res.status === 405
           ? "the chat route isn't available" : `HTTP ${res.status}`);
@@ -847,6 +940,15 @@
               answer += data.text;
               // The trailing ```actions block is for us, not for display.
               reply.textContent = answer.split("```actions")[0].trimEnd() || "…";
+              reply.scrollIntoView({ block: "end" });
+            } else if (ev === "trace") {
+              addChatTrace(data);
+              const n = document.createElement("div");
+              n.className = "msg trace";
+              n.textContent = data.tool === "fetch"
+                ? `📄 Telem fetch · ${new URL(data.url).hostname.replace(/^www\./, "")}${data.error ? " · failed" : ` · ${Math.round((data.chars ?? 0) / 1000)}k chars`}`
+                : `🔎 Telem search (${data.focus}) “${data.query}” · ${(data.providers ?? []).length} engines · kept ${data.kept}`;
+              cluster.menu.log.insertBefore(n, reply);
               reply.scrollIntoView({ block: "end" });
             } else if (ev === "error") throw new Error(data.message);
           }
@@ -927,10 +1029,18 @@
         const m = item.cluster?.lastSearch;
         if (!item.cluster) return;
         if (m?.results) {
-          const dropped = m.dropped.length
-            ? ` Dropped ${m.dropped.length} untrusted (${[...new Set(m.dropped.map((d) => d.label))].join(", ")}).` : "";
-          botSay(item, `Telem routed this search to ${m.providers.join(" + ")} (${(m.ms / 1000).toFixed(1)}s) and found ${m.total} results; ` +
-            `kept ${m.results.length} trustworthy ones.${dropped} Each screen's badge shows its source type and trust score. Ask me anything about them.`);
+          showPlanTrace(m, item.data.text);
+          const steps = m.trace.map((t) => `${t.intent} (${t.kept}/${t.found})`).join(", ");
+          botSay(item, `Telem ran a ${m.trace.length}-step search plan in parallel — ${steps} — across ${m.providers.length} engines ` +
+            `(${m.providers.join(", ")}) in ${(m.ms / 1000).toFixed(1)}s: ${m.total} unique results, ${m.dropped.length} dropped as untrusted. ` +
+            `Each screen's badge shows its source type and trust score. Ask me anything — I research with Telem too.`);
+          const finds = newFinds.get(labelKey(item));
+          if (finds?.length) {
+            botSay(item, `🔔 Since you started watching, Telem Monitors found ${finds.length} new source(s): ` +
+              finds.slice(0, 5).map((f) => `${f.title} (${f.trust.label})`).join(" · "));
+            newFinds.delete(labelKey(item));
+            item.orb.el.querySelector(".badge")?.remove();
+          }
         } else {
           botSay(item, `Showing encyclopedia articles and papers about “${item.data.query ?? item.data.text}”. Ask me anything about them.`);
         }
@@ -1018,6 +1128,7 @@
       }
       if (target && (target === menu || target === groupClose || tiles.includes(target))) target = null;
       item.cluster = null;
+      traceEl.hidden = true;
       updateCloseHud();
     }
 
@@ -1218,6 +1329,7 @@
         typing() ? "Type a topic and press Enter · click the scene to look around again"
         : !looking ? "Click to look around"
         : action === "orb" ? (s.owner.cluster ? "Click to close pages" : `Click to open pages about “${s.owner.data.text}”`)
+        : action === "watch" ? "Click to watch this topic with Telem Monitors"
         : action === "close" ? "Click to close"
         : action === "chat" ? "Click to type"
         : action === "send" ? "Click to send"
@@ -1258,6 +1370,7 @@
       const s = target;
       if (hoverAction === "orb") s.owner.cluster ? closeCluster(s.owner) : openCluster(s.owner);
       else if (hoverAction === "close") closeCluster(s.owner);
+      else if (hoverAction === "watch") toggleWatch(s.owner);
       else if (hoverAction === "send") sendChat(s.owner);
       else if (hoverAction === "chat") {
         // Free the mouse so you can type; WASD pauses while the box has focus.
@@ -1333,6 +1446,9 @@
     });
 
     buildAll();
+    // Telem Monitors: poll watched labels now and every 5 minutes.
+    pollWatches();
+    setInterval(pollWatches, 5 * 60 * 1000);
 
     // ---------- Frame loop ----------
     renderer.setAnimationLoop((time) => {
@@ -1355,6 +1471,15 @@
     };
     window.__world = {
       setLooking(v) { looking = v; },
+      // Turn a fraction `f` of the way towards an element (smooth camera moves).
+      nudgeToward(el, f = 0.15) {
+        const r = el.getBoundingClientRect();
+        const focal = (innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+        lookDX += f * Math.atan((r.left + r.width / 2 - innerWidth / 2) / focal) / 0.0022;
+        lookDY += f * Math.atan((r.top + r.height / 2 - innerHeight / 2) / focal) / 0.0022;
+      },
+      camPos: () => camera.position.toArray(),
+      camLook: () => { const d = new THREE.Vector3(); camera.getWorldDirection(d); return d.toArray(); },
       // Aim at the centre of an element's on-screen box (iterate to converge).
       aimAtEl(el) {
         const r = el.getBoundingClientRect();

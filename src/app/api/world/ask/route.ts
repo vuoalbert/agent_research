@@ -1,22 +1,27 @@
-// Ported from nyc-world by menonsprithvi-web (server.mjs, POST /api/ask).
+// Ported from nyc-world by menonsprithvi-web (server.mjs @ a4e4a44, POST /api/ask).
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
-import { MAX_PAGES, MAX_PAGE_CHARS, SYSTEM_PROMPT, buildPrompt, type Page, type Turn } from "./prompt";
+import { telemKey, worldLineage } from "@/server/worlds/telem";
+
+import { MAX_PAGES, MAX_PAGE_CHARS, buildPrompt, systemPrompt, type Page, type Turn } from "./prompt";
+import { WORLD_TELEM_SERVER, WORLD_TELEM_TOOL_IDS, createWorldTelemServer } from "./tools";
 
 /**
  * POST /api/world/ask — the chat panel inside a World Labs world: Claude
  * answers from the six screens floating around the viewer, citing them [n],
  * and may change them by ending its reply with one fenced ```actions block
  * (open a URL or a paper on a screen, highlight a phrase, swap all six to a
- * topic), which the viewer carries out. Web search is its one tool, to find
- * trustworthy pages to put on a screen.
+ * topic), which the viewer carries out. Its research tools are Telem's
+ * (./tools.ts): telem_search (focus: general / official / research / news)
+ * and telem_fetch, each call streamed to the viewer as a `trace` event; with no
+ * TELEM_API_KEY it falls back to the SDK's web search.
  *
  * Like /api/chat it runs the Claude Agent SDK on this machine's own Claude
  * login: no API key is read or forwarded.
  *
- * Request:  { question: string, pages: {title, url, text}[], history?: {role, content}[] }
- * Response: text/event-stream of `delta` {text}, then `done` {} or `error` {message}
+ * Request:  { question: string, pages: {title, url, text}[], history?: {role, content}[], chatId?: string }
+ * Response: text/event-stream of `delta` {text} and `trace` {tool, …}, then `done` {} or `error` {message}
  */
 
 export const runtime = "nodejs";
@@ -29,8 +34,10 @@ export async function POST(request: Request) {
   let question: string;
   let pages: Page[];
   let history: Turn[];
+  let chatId: unknown;
   try {
-    const body = (await request.json()) as { question?: unknown; pages?: unknown; history?: unknown };
+    const body = (await request.json()) as { question?: unknown; pages?: unknown; history?: unknown; chatId?: unknown };
+    chatId = body.chatId;
     question = typeof body.question === "string" ? body.question.trim().slice(0, 4000) : "";
     pages = (Array.isArray(body.pages) ? body.pages : [])
       .filter((p): p is Page => !!p && typeof p === "object" && typeof (p as Page).text === "string")
@@ -57,6 +64,11 @@ export async function POST(request: Request) {
       const send = (event: string, data: unknown) => {
         if (!abort.signal.aborted) controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
+      const telem = !!telemKey();
+      // one Telem session per chat: the world's calls join its chat's lineage
+      const telemServer = telem
+        ? createWorldTelemServer({ lineage: worldLineage(chatId, question), onTrace: (trace) => send("trace", trace), signal: abort.signal })
+        : undefined;
       try {
         const run = query({
           prompt: buildPrompt({ question, pages, history }),
@@ -64,14 +76,16 @@ export async function POST(request: Request) {
             model: MODEL,
             effort: EFFORT,
             thinking: { type: "adaptive" },
-            systemPrompt: SYSTEM_PROMPT,
-            // web search is the only tool (to find trustworthy sources); no repo
-            // settings; a few turns allow search → answer
-            tools: ["WebSearch"],
-            allowedTools: ["WebSearch"],
+            systemPrompt: systemPrompt(telem),
+            // research tools are Telem's (search + fetch), or web search without
+            // a key; no built-in tools, no repo settings; a few turns allow
+            // search → read → answer
+            tools: telem ? [] : ["WebSearch"],
+            ...(telemServer ? { mcpServers: { [WORLD_TELEM_SERVER]: telemServer } } : {}),
+            allowedTools: telem ? WORLD_TELEM_TOOL_IDS : ["WebSearch"],
             settingSources: [],
             permissionMode: "dontAsk",
-            maxTurns: 6,
+            maxTurns: 8,
             includePartialMessages: true,
             abortController: abort,
           },
