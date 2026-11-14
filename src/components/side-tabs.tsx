@@ -9,6 +9,8 @@ import {
 } from "motion/react";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { useTabView } from "@/components/tab-view-context";
+
 import {
   DURATION,
   SHIFT,
@@ -21,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { KnowledgeBase } from "@/components/knowledge-base";
 
 /**
- * SideTabs — four labelled handles hanging inward from the chat card's right
+ * SideTabs — five labelled handles hanging inward from the chat card's right
  * edge, each one a browser tab turned on its side: the base, with its two
  * concave flares, sits on the card's right border and the rounded end reaches
  * left into the chat. Each carries its name written down the tab (top to
@@ -90,8 +92,21 @@ export const SIDE_TAB_LABELS = [
   "References",
   "World Labs",
   "Force graph",
+  "Visualize",
 ] as const;
 export type SideTabLabel = (typeof SIDE_TAB_LABELS)[number];
+/**
+ * What each tab opens: its side panel, or a full-width page over both cards
+ * (src/components/full-tab-view.tsx). Outside a TabViewProvider every tab
+ * falls back to its side panel.
+ */
+export const SIDE_TAB_KIND: Record<SideTabLabel, "side" | "full"> = {
+  "Knowledge base": "side",
+  References: "side",
+  "World Labs": "full",
+  "Force graph": "full",
+  Visualize: "full",
+};
 
 /** the box: the reach, plus the card's 1px border column on the right */
 const W = SIDE_TAB_REACH + 1;
@@ -222,7 +237,11 @@ export function SideTabs({ className }: { className?: string }) {
     }
   }
 
-  const toggle = (label: SideTabLabel) => show(open === label ? null : label);
+  const tabView = useTabView();
+  const toggle = (label: SideTabLabel, opener?: HTMLElement) => {
+    if (tabView && SIDE_TAB_KIND[label] === "full") return tabView.openView(label, opener ?? null);
+    show(open === label ? null : label);
+  };
 
   /* Escape closes whatever is open */
   useEffect(() => {
@@ -310,7 +329,7 @@ export function SideTabs({ className }: { className?: string }) {
         ))}
       </div>
       {/* A column that wraps into a second, clipped column: on a viewport too
-          short for all four, the ones that don't fit drop out whole instead
+          short for all five, the ones that don't fit drop out whole instead
           of being cut through the middle. Clipped on the right only (the
           negative left inset), so a tab riding a panel stays visible. After
           the panels in the tree, so a riding tab covers the panel's border. */}
@@ -327,7 +346,7 @@ export function SideTabs({ className }: { className?: string }) {
             hidden={open !== null && open !== label}
             controls={present.includes(label) ? `${id}-panel-${index}` : undefined}
             reduce={reduce}
-            onToggle={() => toggle(label)}
+            onToggle={(event) => toggle(label, event.currentTarget)}
           />
         ))}
       </div>
@@ -350,7 +369,7 @@ function SideTab({
   hidden: boolean;
   controls: string | undefined;
   reduce: boolean;
-  onToggle: () => void;
+  onToggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   /* off its resting place, leftward, means riding a panel */
   const attached = useTransform(offset, (x) => (x < 0 ? 1 : 0));

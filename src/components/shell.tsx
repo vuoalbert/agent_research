@@ -1,7 +1,9 @@
 import { AppTransition } from "@/components/app-transition";
+import { FullTabView } from "@/components/full-tab-view";
 import { IconRail } from "@/components/icon-rail";
 import { SideTabs } from "@/components/side-tabs";
 import { Sidebar } from "@/components/sidebar";
+import { TabViewProvider } from "@/components/tab-view-context";
 import { TopBar } from "@/components/top-bar";
 import type { View } from "@/lib/navigation";
 import type { ReactNode } from "react";
@@ -23,6 +25,10 @@ import type { ReactNode } from "react";
  *             off its right border: x 1397..1432, reaching 34px in from the
  *             border's inner edge at 1431. An open tab's panel slides out of
  *             that border over the chat, x 1111..1431 at 1440 wide.
+ *   full view World Labs / Force graph / Visualize open a page over BOTH
+ *             cards instead:
+ *             x 60..1432, y 40..892, all four corners rounded, sliding in
+ *             from the window's right edge (src/components/full-tab-view.tsx).
  *
  * Edge ownership — verified against the PNG by the region agents, and the
  * reason the capture shows exactly 1px at every seam, never 2 and never 0:
@@ -50,30 +56,42 @@ export function Shell({ view, content }: { view: View; content: ReactNode }) {
   const routeKey = view.app;
 
   return (
-    <div className="grid h-full w-full grid-cols-[61px_249px_minmax(0,1fr)] grid-rows-[40px_1fr] bg-plane-page">
-      <div className="col-span-3 row-start-1">
-        <TopBar />
-      </div>
-      <div className="col-start-1 row-start-2 min-h-0">
-        <IconRail active={view.app} />
-      </div>
-      <div className="col-start-2 row-start-2 min-h-0 pb-2">
-        {/* the sidebar animates its own body, keyed by app */}
-        <Sidebar view={view} />
-      </div>
-      <div className="relative col-start-3 row-start-2 min-h-0 min-w-0 pr-2 pb-2">
-        {/* the pane swaps on any route change, not just an app change: the
+    <TabViewProvider>
+      <div className="grid h-full w-full grid-cols-[61px_249px_minmax(0,1fr)] grid-rows-[40px_1fr] bg-plane-page">
+        <div className="col-span-3 row-start-1">
+          <TopBar />
+        </div>
+        <div className="col-start-1 row-start-2 min-h-0">
+          <IconRail active={view.app} />
+        </div>
+        <div
+          data-full-view-covers=""
+          className="col-start-2 row-start-2 min-h-0 pb-2"
+        >
+          {/* the sidebar animates its own body, keyed by app */}
+          <Sidebar view={view} />
+        </div>
+        <div
+          data-full-view-covers=""
+          className="relative col-start-3 row-start-2 min-h-0 min-w-0 pr-2 pb-2"
+        >
+          {/* the pane swaps on any route change, not just an app change: the
             breadcrumb and the body below it belong to the same route */}
-        <AppTransition id={routeKey} scope="pane" className="h-full">
-          {content}
-        </AppTransition>
-        {/* `right-2` matches the 8px gutter, so the stack's right edge is the
+          <AppTransition id={routeKey} scope="pane" className="h-full">
+            {content}
+          </AppTransition>
+          {/* `right-2` matches the 8px gutter, so the stack's right edge is the
             card's outer right edge and each tab's last column lands on the
             card's border. Above the card's content (z-10, after it in the
             tree), so whatever scrolls under a tab is hidden by its fill. Top
             16px and bottom 16px keep every flare off the card's 8px corners. */}
-        <SideTabs className="absolute top-4 right-2 bottom-4 z-10" />
+          <SideTabs className="absolute top-4 right-2 bottom-4 z-10" />
+        </div>
+        {/* A full tab view's host: both cards' columns, pulled 1px left onto the
+          sidebar card's seam, above the side tabs (z-10) and the composer.
+          Click-through until a page is in it; it keeps the 8px gutters. */}
+        <FullTabView className="z-20 col-span-2 col-start-2 row-start-2 -ml-px min-h-0 min-w-0" />
       </div>
-    </div>
+    </TabViewProvider>
   );
 }
