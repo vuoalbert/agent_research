@@ -65,9 +65,12 @@ const CHROME_WRAPPER = `#!/bin/sh
 # profile, which confines it; see src/server/visualize/browser-tool.ts.
 # CHROME_DEBUG_PORT pins DevTools to the one localhost port that profile
 # allows (a later --remote-debugging-port wins over the script's =0).
+# --use-mock-keychain: the profile hides ~/Library/Keychains, and without this
+# Chrome asks macOS for a keychain and pops "Keychain Not Found" on every run.
 port=""
 if [ -n "\${CHROME_DEBUG_PORT:-}" ]; then port="--remote-debugging-port=\${CHROME_DEBUG_PORT}"; fi
 exec "\${ANATOMY_REAL_CHROME:?ANATOMY_REAL_CHROME is not set}" --no-sandbox --disable-breakpad \\
+  --use-mock-keychain --password-store=basic \\
   --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1" "$@" $port
 `;
 
