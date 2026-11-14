@@ -6,7 +6,6 @@ import { useMemo, useState } from "react";
 
 import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { Button } from "@/components/ui/button";
-import { ScrollBlur } from "@/components/ui/scroll-blur";
 import { selectChatSources, useAgentStore, type Source } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +15,7 @@ import { cn } from "@/lib/utils";
  * source list in the manner of NotebookLM's, set in this app's light theme.
  * Each row is a link out to the page. The heading stays put: the component
  * fills the panel and only the list below it scrolls (scrollbar hidden), with
- * a soft fade at whichever edge has more list beyond it. Sources only: claims
+ * shadcn's `scroll-fade-y` mask fading whichever edge has more list beyond it. Sources only: claims
  * live in References (the vault's Claims/ notes) and the Force graph.
  */
 
@@ -112,19 +111,16 @@ export function KnowledgeBase({ titleId }: { titleId: string }) {
           <p className="text-[13px] leading-5 text-plane-muted">Sources Claude finds will appear here</p>
         </div>
       ) : (
-        <ScrollBlur
-          fadeSize={28}
-          className="-mx-4 mt-2 flex-1"
-          viewportClassName={cn("overflow-y-auto px-4", NO_SCROLLBAR)}
-          viewportLabel="Sources"
-          viewportProps={{ "data-kb": "scroll" }}
+        <div
+          data-kb="scroll"
+          className={cn("scroll-fade-y scroll-fade-7 -mx-4 mt-2 min-h-0 flex-1 overflow-y-auto px-4", NO_SCROLLBAR)}
         >
           <ul aria-label="Sources" className="flex flex-col">
             {sources.map((source) => (
               <SourceRow key={source.url} source={source} />
             ))}
           </ul>
-        </ScrollBlur>
+        </div>
       )}
     </div>
   );
