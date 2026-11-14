@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 
 import type { ForceGraph3DInstance } from "3d-force-graph";
 import type { CSS3DSprite } from "three/examples/jsm/renderers/CSS3DRenderer.js";
@@ -21,6 +21,7 @@ import {
   type Panel,
 } from "@/components/graph-page-panel";
 import { useAgentStore } from "@/lib/agent-store";
+import { isLinkDimmed, linkColorFor, nodeColorFor, type GraphControls, type Highlight } from "@/lib/graph-highlight";
 import { CROSSREF_LINK_STYLE } from "@/lib/crossref-links";
 import { useReduced } from "@/lib/motion-tokens";
 import {
@@ -136,7 +137,17 @@ function applyData(live: Live, data: ResearchGraph) {
   live.graph.graphData({ nodes, links: data.links.map((link) => ({ ...link })) });
 }
 
-export function ForceGraph3D({ className }: { className?: string }) {
+/**
+ * `controls` is the chatbox's hook into the graph (see graph-highlight.ts):
+ * set once the graph has loaded, null again once it is gone.
+ */
+export function ForceGraph3D({
+  className,
+  controls: hook,
+}: {
+  className?: string;
+  controls?: RefObject<GraphControls | null>;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { chats, messages } = useAgentStore();
   const reduce = useReduced();
@@ -149,6 +160,8 @@ export function ForceGraph3D({ className }: { className?: string }) {
   const dataRef = useRef(data);
   const reduceRef = useRef(reduce);
   const liveRef = useRef<Live | null>(null);
+  /** the chatbox's highlight: null dims nothing */
+  const highlightRef = useRef<Highlight>(null);
 
   useEffect(() => {
     reduceRef.current = reduce;
@@ -200,10 +213,10 @@ export function ForceGraph3D({ className }: { className?: string }) {
         .nodeId("id")
         .nodeLabel((node) => nodeLabel(node as GraphNode))
         .nodeVal((node) => NODE_VAL[(node as GraphNode).kind])
-        .nodeColor((node) => NODE_COLOR[(node as GraphNode).kind])
+        .nodeColor((node) => nodeColorFor(highlightRef.current, (node as GraphNode).id, NODE_COLOR[(node as GraphNode).kind]))
         .nodeOpacity(0.95)
         .nodeResolution(12)
-        .linkColor((link) => linkStyle(link).color)
+        .linkColor((link) => linkColorFor(highlightRef.current, link as ResearchLink, linkStyle(link).color))
         .linkWidth(linkWidthOf)
         .linkOpacity(0.9)
         /* opaque kinds (conflicts) get their own solid material */
@@ -216,7 +229,9 @@ export function ForceGraph3D({ className }: { className?: string }) {
         })
         /* agrees / conflicts: the claim(s) with ✓ / ✗ hosts, escaped upstream */
         .linkLabel((link) => (link as ResearchLink).label ?? "")
-        .linkDirectionalParticles((link) => (reduceRef.current ? 0 : linkStyle(link).particles))
+        .linkDirectionalParticles((link) =>
+          reduceRef.current || isLinkDimmed(highlightRef.current, link as ResearchLink) ? 0 : linkStyle(link).particles,
+        )
         .linkDirectionalParticleColor((link) => linkStyle(link).color)
         .linkDirectionalParticleSpeed((link) => linkStyle(link).particleSpeed ?? 0.01)
         .linkDirectionalParticleWidth(
@@ -409,8 +424,7 @@ export function ForceGraph3D({ className }: { className?: string }) {
         }
       };
       /** a clicked page is pinned open at once; the camera flies to frame it */
-      graph.onNodeClick((raw) => {
-        const node = raw as GraphNode;
+      const flyToNode = (node: GraphNode) => {
         const ms = node.kind === "page" ? flyTo(node, pageFit()) : flyTo(node, FLY_DISTANCE[node.kind], true);
         flyingUntil = performance.now() + ms + 250;
         if (node.kind === "page" && node.url) {
@@ -418,7 +432,26 @@ export function ForceGraph3D({ className }: { className?: string }) {
           pinPage(deck, node.id);
           sync();
         }
-      });
+      };
+      graph.onNodeClick((raw) => flyToNode(raw as GraphNode));
+      if (hook) {
+        hook.current = {
+          focusNode: (id) => {
+            const node = (graph.graphData().nodes as GraphNode[]).find((n) => n.id === id);
+            if (node) flyToNode(node);
+            return Boolean(node);
+          },
+          setHighlight: (ids) => {
+            highlightRef.current = ids ? new Set(ids) : null;
+            if (ids) container.dataset.highlight = String(highlightRef.current!.size);
+            else delete container.dataset.highlight;
+            // re-handing the accessors re-styles every node and link
+            graph.nodeColor(graph.nodeColor()).linkColor(graph.linkColor());
+            graph.linkDirectionalParticles(graph.linkDirectionalParticles());
+          },
+          getGraph: () => dataRef.current,
+        };
+      }
 
       const frustum = new THREE.Frustum();
       const matrix = new THREE.Matrix4();
@@ -476,6 +509,7 @@ export function ForceGraph3D({ className }: { className?: string }) {
 
     return () => {
       cancelled = true;
+      if (hook) hook.current = null;
       observer?.disconnect();
       if (frame) cancelAnimationFrame(frame);
       closePanel();
@@ -493,7 +527,8 @@ export function ForceGraph3D({ className }: { className?: string }) {
       liveRef.current = null;
       live = null;
     };
-  }, []);
+    // `controls` is a ref object: stable, so the graph is built once
+  }, [hook]);
 
   return (
     <div className={cn("overflow-hidden", className)}>

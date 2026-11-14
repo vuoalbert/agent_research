@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 
-import { ForceGraph3D } from "@/components/force-graph-3d";
+import { ForceGraphView } from "@/components/force-graph-view";
 import { useTabView } from "@/components/tab-view-context";
 import { VisualizeView } from "@/components/visualize/visualize-view";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,8 @@ import { cn } from "@/lib/utils";
  *
  * World Labs is a blank white canvas for now; Force graph fills its page with
  * a 3D force graph (src/components/force-graph-3d.tsx), and Visualize with the
- * figures Claude is building or has built (src/components/visualize/).
+ * figures Claude is building or has built (src/components/visualize/). The
+ * Force graph has a chatbox to ask it questions (src/components/graph-chat.tsx).
  *
  * It slides in from past the host's right edge — the window's — and slides
  * back out the same way on close. The host clips (overflow: clip, never
@@ -97,7 +98,7 @@ export function FullTabView({ className }: { className?: string }) {
               {/* the canvas fills the page, under the Back button; mounted
                   only while this view is in the DOM, so it is destroyed once
                   the slide-out finishes */}
-              {view === "Force graph" && <ForceGraph3D className="absolute inset-0" />}
+              {view === "Force graph" && <ForceGraphView className="absolute inset-0" />}
               {view === "Visualize" && <VisualizeView className="absolute inset-0" />}
               <Button
                 ref={backRef}
