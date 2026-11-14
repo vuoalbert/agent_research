@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { __setTelemForTests } from "@/server/telem/client";
+
 import { MAX_LABEL, MAX_LINKS, MAX_NODES } from "./navigate";
 
 const query = vi.fn();
@@ -90,6 +92,52 @@ describe("POST /api/graph-chat", () => {
     expect(prompt).toContain(`Graph: ${MAX_NODES} nodes, ${MAX_LINKS} links.`);
     expect(prompt).toContain(`\t${"L".repeat(MAX_LABEL)}\n`);
     expect(prompt).not.toContain("L".repeat(MAX_LABEL + 1));
+  });
+
+  it("finds more sources with Telem off the node the question is about, minus pages already drawn", async () => {
+    vi.stubEnv("TELEM_API_KEY", "test-key");
+    vi.stubEnv("TAVILY_API_KEY", "");
+    const run = (provider: string, results: { rank: number; url: string; title: string; summary?: string }[]) => ({
+      provider,
+      status: "succeeded",
+      latencyMs: 1,
+      results: results.map((r) => ({ ...r, provider })),
+    });
+    const telemSearch = vi.fn(async (q: string) => {
+      expect(q).toBe("X report solar costs follow-up");
+      const byProvider = [run("exa", [{ rank: 1, url: "https://www.x.org", title: "X again" }, { rank: 2, url: "https://z.org/new", title: "Z new", summary: "fresh" }])];
+      return { status: "succeeded", results: byProvider[0].results, byProvider, raw: { session_id: "s1" } };
+    });
+    __setTelemForTests({ search: telemSearch as never, fetch: (async () => ({})) as never });
+    try {
+      query.mockReturnValueOnce(
+        answer({ reply: "Searching for more like X.", focus: null, highlight: ["n4"], search: { query: "X report solar costs follow-up", from: "n3" } }),
+      );
+      const response = await post({ question: "find more sources like this", graph, focus: "page:x.org", chatId: "a" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        reply: "Found 1 new source for “X report solar costs follow-up” with Telem.",
+        focus: "page:x.org",
+        highlight: [],
+        found: {
+          query: "X report solar costs follow-up",
+          from: "page:x.org",
+          sources: [{ url: "https://z.org/new", title: "Z new", excerpt: "fresh", provider: "exa", providers: ["exa"], score: 1 }],
+        },
+      });
+      // the model is told which node "this" is
+      expect(query.mock.calls[0][0].prompt).toContain("Focused node: n3 (X report)");
+    } finally {
+      __setTelemForTests(null);
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("leaves Telem alone for a plain navigation question, and drops an unknown focus", async () => {
+    query.mockReturnValueOnce(answer({ reply: "Here.", focus: "n2", highlight: [], search: null }));
+    const response = await post({ question: "where is solar?", graph, focus: "page:nowhere" });
+    expect(await response.json()).toEqual({ reply: "Here.", focus: "search:a:m:c", highlight: [] });
+    expect(query.mock.calls[0][0].prompt).not.toContain("Focused node");
   });
 
   it("reports a failed model call", async () => {

@@ -84,6 +84,11 @@ export type ToolCall = {
   parentId?: string;
   /** … and the subagent that made it */
   agentId?: string;
+  /** a Telem search the user ran outside the chat: from the Force graph's
+   *  chatbox ("find more like this") or the Knowledge base's "Find more" */
+  origin?: "graph" | "kb";
+  /** a graph-made search: the graph node its sources hang off */
+  from?: string;
 };
 
 const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = [
@@ -613,6 +618,92 @@ export function selectChatCrossref(messages: readonly Message[] | undefined): Cr
   return mergeCrossrefs(results);
 }
 
+/**
+ * Where each source a chat holds came from, when it was not the chat's own
+ * research: "graph" (the Force graph's chatbox found it) or "kb" (the
+ * Knowledge base's Find more), keyed by `sourceKey`, first sighting wins.
+ */
+export function selectSourceOrigins(messages: readonly Message[] | undefined): Map<string, "graph" | "kb"> {
+  const seen = new Set<string>();
+  const origins = new Map<string, "graph" | "kb">();
+  for (const message of messages ?? []) {
+    for (const call of Array.isArray(message.tools) ? message.tools : []) {
+      for (const source of call.sources ?? []) {
+        if (!source || typeof source.url !== "string") continue;
+        const key = sourceKey(source.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (call.origin === "graph" || call.origin === "kb") origins.set(key, call.origin);
+      }
+    }
+  }
+  return origins;
+}
+
+/** the name a Telem search found outside the chat goes by, in the thread and the graph */
+export const TELEM_TOOL_NAME = "Telem";
+
+/**
+ * Add sources a Telem search found outside the chat (the graph's chatbox, the
+ * Knowledge base's Find more) to a chat, as one done search call on its latest
+ * assistant turn — so the Knowledge base lists them, the graph draws them, and
+ * the next turn's cross_reference weighs them. A chat with no assistant turn
+ * gets a short one saying what was found. Sources the chat already has are
+ * dropped; with none left nothing is written. Returns how many were added and
+ * where the call went (its turn and id), or null when nothing was.
+ */
+export type FoundWrite = { added: number; messageId: string; callId: string };
+
+function addFoundSources(
+  chatId: string,
+  { query, sources, origin, from }: { query: string; sources: readonly Source[]; origin: "graph" | "kb"; from?: string },
+): FoundWrite | null {
+  const current = getSnapshot();
+  if (!current.chats.some((chat) => chat.id === chatId)) return null;
+  const turns = current.messages[chatId] ?? [];
+  const have = new Set(selectChatSources(turns).map((source) => sourceKey(source.url)));
+  const fresh: Source[] = [];
+  for (const source of sources) {
+    if (!source || typeof source.url !== "string" || !/^https?:\/\//i.test(source.url)) continue;
+    const key = sourceKey(source.url);
+    if (have.has(key)) continue;
+    have.add(key);
+    fresh.push({ title: (source.title || source.url).trim(), url: source.url });
+  }
+  if (fresh.length === 0) return null;
+  const call: ToolCall = {
+    id: makeId("telem"),
+    name: TELEM_TOOL_NAME,
+    query: query.trim() || "Find more",
+    status: "done",
+    sources: fresh,
+    origin,
+    ...(from ? { from } : {}),
+  };
+  /* a reply still streaming is fine: its frames update its calls in place */
+  const last = [...turns].reverse().find((turn) => turn.role === "assistant");
+  if (last) {
+    setState({
+      ...current,
+      messages: {
+        ...current.messages,
+        [chatId]: turns.map((turn) => (turn.id === last.id ? { ...turn, tools: [...(turn.tools ?? []), call] } : turn)),
+      },
+    });
+    return { added: fresh.length, messageId: last.id, callId: call.id };
+  }
+  const messageId = makeId("msg");
+  const where = origin === "graph" ? "from the Force graph" : "from the Knowledge base";
+  append(chatId, {
+    id: messageId,
+    role: "assistant",
+    content: `Found ${fresh.length} more ${fresh.length === 1 ? "source" : "sources"} with Telem ${where}.`,
+    createdAt: Date.now(),
+    tools: [call],
+  });
+  return { added: fresh.length, messageId, callId: call.id };
+}
+
 /** the most chat sources one request carries (the route's cap) */
 export const MAX_REQUEST_SOURCES = 60;
 
@@ -782,6 +873,7 @@ export {
   sendMessage,
   seedIfEmpty,
   stopStreaming,
+  addFoundSources,
 };
 
 /** the current snapshot, outside React */

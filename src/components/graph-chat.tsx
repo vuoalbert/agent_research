@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type Keyboard
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { addFoundSources, getAgentState, selectChatSources, sourceKey, type AgentState } from "@/lib/agent-store";
 import { graphChatPayload, type GraphChatAnswer, type GraphChatGraph, type GraphControls } from "@/lib/graph-highlight";
+import { pageNodeId } from "@/lib/research-graph";
 import { cn } from "@/lib/utils";
 
 /**
@@ -19,18 +21,33 @@ import { cn } from "@/lib/utils";
  * The question goes to POST /api/graph-chat with the graph exactly as drawn
  * (`controls.getGraph()`), so the ids that come back are the graph's own.
  *
+ * "Find more sources like this" / "search for X" runs a Telem search on the
+ * server; what it finds is added to the chat the focused node belongs to (one
+ * Telem call on its latest turn, marked as found from the graph), so the new
+ * pages appear as nodes off that node — and in the Knowledge base.
+ *
  * Only the box and the reply take the pointer; around them the graph keeps
  * its drag and wheel. Keys typed into the box stop at the box, so the
  * graph's camera controls never see them.
  */
 
-export type AskGraph = (question: string, graph: GraphChatGraph, signal: AbortSignal) => Promise<GraphChatAnswer>;
+export type AskGraph = (
+  question: string,
+  graph: GraphChatGraph,
+  signal: AbortSignal,
+  context?: { focus?: string | null; chatId?: string | null },
+) => Promise<GraphChatAnswer>;
 
-export const askGraph: AskGraph = async (question, graph, signal) => {
+export const askGraph: AskGraph = async (question, graph, signal, context = {}) => {
   const response = await fetch("/api/graph-chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ question, graph }),
+    body: JSON.stringify({
+      question,
+      graph,
+      ...(context.focus ? { focus: context.focus } : {}),
+      ...(context.chatId ? { chatId: context.chatId } : {}),
+    }),
     signal,
   });
   const body = (await response.json().catch(() => null)) as (GraphChatAnswer & { error?: string }) | null;
@@ -38,7 +55,29 @@ export const askGraph: AskGraph = async (question, graph, signal) => {
   return body;
 };
 
-export const PLACEHOLDER = "Ask the graph…";
+export const PLACEHOLDER = "Ask the graph, or find more sources…";
+
+/**
+ * The chat a graph node belongs to: a chat, search or subagent node names it
+ * in its id; a page belongs to the active chat if that chat has it, else to
+ * the first live chat that does. Null when no live chat claims it.
+ */
+export function chatForNode(nodeId: string | null, state: Pick<AgentState, "chats" | "messages" | "activeChatId">): string | null {
+  const live = state.chats.filter((chat) => !chat.archived);
+  const isLive = (id: string | undefined) => (id && live.some((chat) => chat.id === id) ? id : null);
+  if (nodeId) {
+    const [kind, rest] = [nodeId.slice(0, nodeId.indexOf(":")), nodeId.slice(nodeId.indexOf(":") + 1)];
+    if (kind === "chat") return isLive(rest);
+    if (kind === "search" || kind === "subagent") return isLive(rest.split(":")[0]);
+    if (kind === "page") {
+      const order = [...live].sort((a, b) => Number(b.id === state.activeChatId) - Number(a.id === state.activeChatId));
+      for (const chat of order) {
+        if (selectChatSources(state.messages[chat.id]).some((source) => `page:${sourceKey(source.url)}` === nodeId)) return chat.id;
+      }
+    }
+  }
+  return isLive(state.activeChatId ?? undefined) ?? live.find((chat) => (state.messages[chat.id] ?? []).length > 0)?.id ?? null;
+}
 
 export function GraphChat({
   controls,
@@ -90,11 +129,37 @@ export function GraphChat({
     abortRef.current = abort;
     setPending(true);
     try {
-      const answer = await ask(question, graphChatPayload(graph), abort.signal);
+      const focus = controls.current?.getFocus?.() ?? null;
+      const answer = await ask(question, graphChatPayload(graph), abort.signal, {
+        focus,
+        chatId: chatForNode(focus, getAgentState()),
+      });
       if (abort.signal.aborted) return;
       setValue("");
       setReply({ text: answer.reply });
       const view = controls.current;
+      if (answer.found && answer.found.sources.length > 0) {
+        const { query, from, sources } = answer.found;
+        const chatId = chatForNode(from, getAgentState());
+        if (!chatId) {
+          setReply({ text: "Open a chat to keep what Telem found.", error: true });
+          return;
+        }
+        const write = addFoundSources(chatId, { query, sources, origin: "graph", ...(from ? { from } : {}) });
+        if (!view || !write) return;
+        /* the new search and its pages, bright with the node they hang off */
+        const bright = [
+          ...(from ? [from] : []),
+          `search:${chatId}:${write.messageId}:${write.callId}`,
+          ...sources.map((source) => pageNodeId(source.url)),
+        ];
+        view.setHighlight(bright);
+        setHighlighted(true);
+        window.setTimeout(() => {
+          if (from) controls.current?.focusNode(from);
+        }, 120);
+        return;
+      }
       if (!view) return;
       if (answer.highlight.length > 0) {
         view.setHighlight(answer.highlight);

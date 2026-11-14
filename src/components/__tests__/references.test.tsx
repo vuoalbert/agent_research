@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { References } from "@/components/references";
 import { SideTabs } from "@/components/side-tabs";
+import { __clearReads } from "@/components/telem-reader-data";
 import { __resetAgentStore } from "@/lib/agent-store";
 import type { VaultNoteView, VaultTree } from "@/lib/vault-browse";
 
@@ -54,9 +55,24 @@ const NOTES: Record<string, VaultNoteView> = {
 };
 
 let tree: VaultTree = TREE;
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+let saved: unknown[] = [];
+const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(String(input), "http://localhost");
   if (url.pathname === "/api/vault/tree") return Response.json(tree);
+  if (url.pathname === "/api/telem/read") {
+    return Response.json({
+      url: url.searchParams.get("url"),
+      title: "Best-selling videogame",
+      host: "guinnessworldrecords.com",
+      text: "# Best-selling videogame\n\nMinecraft has sold **more than 300 million** copies.",
+      provider: "tavily",
+      chars: 70,
+    });
+  }
+  if (url.pathname === "/api/vault/full-page") {
+    saved.push(JSON.parse(String(init?.body)));
+    return Response.json({ path: "Sources/Guinness.md" });
+  }
   const note = NOTES[url.searchParams.get("path") ?? ""];
   return note ? Response.json(note) : Response.json({ error: "no such note" }, { status: 404 });
 });
@@ -74,7 +90,9 @@ const treeCalls = () => fetchMock.mock.calls.filter(([input]) => String(input).s
 beforeEach(() => {
   __resetAgentStore();
   tree = TREE;
+  saved = [];
   streaming = [];
+  __clearReads();
   fetchMock.mockClear();
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -145,6 +163,29 @@ describe("References panel", () => {
     expect(panel.querySelector('[data-ref="note"]')).toBeNull();
     expect(panel.querySelector('[data-ref="back"]')).toBeNull();
     expect(panel.querySelector('[data-ref="scroll"]')!.closest(".hidden")).toBeNull();
+  });
+
+  it("reads a source note's full page through Telem, and saves it to the vault only on request", async () => {
+    const panel = openReferences();
+    fireEvent.click(await within(panel).findByText("Guinness"));
+    await find(panel, '[data-ref="note"][data-ref-path="Sources/Guinness.md"]');
+    // a note with no page has no button
+    expect(panel.querySelectorAll('[data-ref="read-full-page"]')).toHaveLength(1);
+
+    fireEvent.click(panel.querySelector('[data-ref="read-full-page"]')!);
+    const section = await find(panel, '[data-ref="full-page"][data-state="ready"]');
+    expect(section.textContent).toContain("Full page · Read by Telem · tavily");
+    expect(section.textContent).toContain("Minecraft has sold more than 300 million copies.");
+    expect(section.closest('[data-ref="note-scroll"]')).toBeTruthy();
+    expect(saved).toEqual([]);
+
+    fireEvent.click(within(section).getByRole("button", { name: "Save to vault" }));
+    await find(panel, '[data-ref="saved"]');
+    expect(saved).toEqual([{ path: "Sources/Guinness.md", url: "https://www.guinnessworldrecords.com/x" }]);
+    // the note is read again, so the saved section shows in it
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([input]) => String(input).includes("Sources%2FGuinness.md")).length).toBe(2),
+    );
   });
 
   it("shows the empty state for an empty or missing vault", async () => {

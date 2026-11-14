@@ -36,15 +36,17 @@ const RequestSchema = z.object({
     ),
     links: z.array(z.object({ source: z.string(), target: z.string(), kind: z.enum(LINK_KINDS) })),
   }),
+  /** the node the camera is on, which "this" in a question means */
+  focus: z.string().nullish(),
 });
 
-export type GraphChatRequest = { question: string; graph: GraphChatGraph };
+export type GraphChatRequest = { question: string; graph: GraphChatGraph; focus?: string | null };
 
 /** the request, capped (nodes, links, label and question lengths), or why it is not one */
 export function parseRequest(body: unknown): { ok: true; value: GraphChatRequest } | { ok: false; error: string } {
   const parsed = RequestSchema.safeParse(body);
   if (!parsed.success) return { ok: false, error: `invalid request: ${parsed.error.issues[0]?.path.join(".") || "body"}` };
-  const { question, graph } = parsed.data;
+  const { question, graph, focus } = parsed.data;
   const seen = new Set<string>();
   const nodes = [];
   for (const node of graph.nodes) {
@@ -54,7 +56,14 @@ export function parseRequest(body: unknown): { ok: true; value: GraphChatRequest
     if (nodes.length === MAX_NODES) break;
   }
   const links = graph.links.filter((l) => seen.has(l.source) && seen.has(l.target)).slice(0, MAX_LINKS);
-  return { ok: true, value: { question: question.slice(0, MAX_QUESTION), graph: { nodes, links } } };
+  return {
+    ok: true,
+    value: {
+      question: question.slice(0, MAX_QUESTION),
+      graph: { nodes, links },
+      focus: focus && seen.has(focus) ? focus : null,
+    },
+  };
 }
 
 const AnswerSchema = z.object({
@@ -63,6 +72,14 @@ const AnswerSchema = z.object({
   highlight: z
     .array(z.string())
     .describe("Ids (n…) of the nodes to keep bright; every other node dims. Empty to dim nothing."),
+  search: z
+    .object({
+      query: z.string().describe("A web search query (under 12 words) that finds new sources for the request."),
+      from: z.string().nullable().describe("The id (n…) of the node the new sources hang off, or null for the chat."),
+    })
+    .nullable()
+    .optional()
+    .describe("Only when the user asks to find, search for or add more sources; otherwise null."),
 });
 
 /** draft-07 with no `$schema` key: the CLI rejects zod 4's default draft-2020-12 URI */
@@ -84,13 +101,18 @@ export const SYSTEM_PROMPT = [
   "  neighbours — never the whole graph. Set focus to its most central chat or search node (a page focus zooms in on that",
   "  one page and hides the rest).",
   "- Only return ids listed in the graph. If nothing matches, say so and return focus null and an empty highlight.",
+  "- To find / search for / add more sources (\"find more like this\", \"search for X\", \"more on Y\"): set search.query to a",
+  "  focused web search query built from the request and the labels of the node it is about, and search.from to that node",
+  "  (\"this\" means the focused node, when one is given; otherwise the node the question names, else null). A web search",
+  "  then runs and its results join the graph off that node. Set focus to search.from and leave highlight empty; the reply",
+  "  says what you are searching for (\"Searching for …\"). Every other question: search null.",
   "Reply in at most two short sentences (under 30 words in all), naming nodes by their labels, never by id.",
 ].join("\n");
 
 const clean = (text: string) => text.replace(/\s+/g, " ").trim();
 
 /** the prompt, with nodes aliased n1…; `aliases` maps each alias back to its id */
-export function buildPrompt({ question, graph }: GraphChatRequest) {
+export function buildPrompt({ question, graph, focus }: GraphChatRequest) {
   const aliases = new Map<string, string>();
   const aliasOf = new Map<string, string>();
   graph.nodes.forEach((node, i) => {
@@ -108,13 +130,22 @@ export function buildPrompt({ question, graph }: GraphChatRequest) {
     "Links (source kind target):",
     ...linkLines,
     "",
+    ...(focus && aliasOf.has(focus)
+      ? [`Focused node: ${aliasOf.get(focus)} (${clean(graph.nodes.find((n) => n.id === focus)?.label ?? "")})`, ""]
+      : []),
     `Question: ${clean(question)}`,
   ].join("\n");
   return { prompt, aliases };
 }
 
+/** a search the model asked for, in real ids: the query and the node its results hang off */
+export type SearchIntent = { query: string; from: string | null };
+
 /** the model's answer in real ids: unknown ids dropped, the focus kept bright */
-export function resolveAnswer(raw: unknown, aliases: ReadonlyMap<string, string>): GraphChatAnswer {
+export function resolveAnswer(
+  raw: unknown,
+  aliases: ReadonlyMap<string, string>,
+): GraphChatAnswer & { search?: SearchIntent } {
   const parsed = AnswerSchema.safeParse(raw);
   if (!parsed.success) throw new Error("graph chat returned an unusable answer");
   const ids = new Set(aliases.values());
@@ -126,7 +157,13 @@ export function resolveAnswer(raw: unknown, aliases: ReadonlyMap<string, string>
   const focus = parsed.data.focus === null ? null : resolve(parsed.data.focus);
   const highlight = [...new Set(parsed.data.highlight.map(resolve).filter((id): id is string => id !== null))];
   if (focus && highlight.length > 0 && !highlight.includes(focus)) highlight.unshift(focus);
-  return { reply: clean(parsed.data.reply).slice(0, MAX_REPLY), focus, highlight };
+  const answer = { reply: clean(parsed.data.reply).slice(0, MAX_REPLY), focus, highlight };
+  const search = parsed.data.search;
+  if (!search || !clean(search.query)) return answer;
+  return {
+    ...answer,
+    search: { query: clean(search.query).slice(0, MAX_QUESTION), from: search.from === null ? null : resolve(search.from) },
+  };
 }
 
 /** one structured, tool-less Claude call on the local Claude login */

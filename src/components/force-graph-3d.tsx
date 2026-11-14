@@ -424,7 +424,10 @@ export function ForceGraph3D({
         }
       };
       /** a clicked page is pinned open at once; the camera flies to frame it */
+      /** the node last flown to, for the chatbox's "find more like this" */
+      let focusedId: string | null = null;
       const flyToNode = (node: GraphNode) => {
+        focusedId = node.id;
         const ms = node.kind === "page" ? flyTo(node, pageFit()) : flyTo(node, FLY_DISTANCE[node.kind], true);
         flyingUntil = performance.now() + ms + 250;
         if (node.kind === "page" && node.url) {
@@ -450,6 +453,7 @@ export function ForceGraph3D({
             graph.linkDirectionalParticles(graph.linkDirectionalParticles());
           },
           getGraph: () => dataRef.current,
+          getFocus: () => (focusedId && dataRef.current.nodes.some((n) => n.id === focusedId) ? focusedId : null),
         };
       }
 
