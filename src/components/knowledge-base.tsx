@@ -7,14 +7,7 @@ import { useMemo, useState } from "react";
 import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { Button } from "@/components/ui/button";
 import { ScrollBlur } from "@/components/ui/scroll-blur";
-import {
-  selectChatCrossref,
-  selectChatSources,
-  useAgentStore,
-  type Claim,
-  type ClaimSource,
-  type Source,
-} from "@/lib/agent-store";
+import { selectChatSources, useAgentStore, type Source } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,7 +16,8 @@ import { cn } from "@/lib/utils";
  * source list in the manner of NotebookLM's, set in this app's light theme.
  * Each row is a link out to the page. The heading stays put: the component
  * fills the panel and only the list below it scrolls (scrollbar hidden), with
- * a soft fade at whichever edge has more list beyond it.
+ * a soft fade at whichever edge has more list beyond it. Sources only: claims
+ * live in References (the vault's Claims/ notes) and the Force graph.
  */
 
 /** a URL's host without the `www.`, or the URL itself if it does not parse */
@@ -96,57 +90,11 @@ function SourceRow({ source }: { source: Source }) {
   );
 }
 
-/** one host chip under a claim: ✓ neutral grey, ✗ solid red; the quote on hover */
-function StanceChip({ source }: { source: ClaimSource }) {
-  const host = hostOf(source.url);
-  const against = source.stance === "contradicts";
-  return (
-    <li
-      data-stance={source.stance}
-      title={source.quote ? `“${source.quote}”\n${host}` : host}
-      className={cn(
-        "inline-flex h-5 max-w-full min-w-0 items-center gap-1 rounded-[5px] px-1.5 text-[12px] leading-4",
-        against ? "bg-[#DC2626] text-white" : "bg-plane-active text-plane-muted",
-      )}
-    >
-      <span aria-hidden className="shrink-0">{against ? "✗" : "✓"}</span>
-      <span className="sr-only">{against ? "Contradicts:" : "Supports:"}</span>
-      <span className="min-w-0 truncate">{host}</span>
-    </li>
-  );
-}
-
-/**
- * A claim a cross-reference found, with ✓ chips for the hosts that support it
- * and solid red ✗ chips for those that contradict it (the quote on hover).
- */
-function ClaimRow({ claim }: { claim: Claim }) {
-  // "mentions" neither confirm nor deny, so they get no chip
-  const chips = [
-    ...claim.sources.filter((source) => source.stance === "supports"),
-    ...claim.sources.filter((source) => source.stance === "contradicts"),
-  ];
-  const conflicted = chips.some((source) => source.stance === "contradicts");
-  return (
-    <li data-claim="" data-conflict={conflicted ? "" : undefined} className="flex flex-col gap-1.5 py-2">
-      <p className="text-[14px] leading-5 text-plane-ink">{claim.text}</p>
-      {chips.length > 0 && (
-        <ul aria-label="Sources on this claim" className="flex flex-wrap gap-1">
-          {chips.map((source) => (
-            <StanceChip key={`${source.stance}:${source.url}`} source={source} />
-          ))}
-        </ul>
-      )}
-    </li>
-  );
-}
-
 export function KnowledgeBase({ titleId }: { titleId: string }) {
   const { activeChatId, messages } = useAgentStore();
   const turns = activeChatId ? messages[activeChatId] : undefined;
   const sources = useMemo(() => selectChatSources(turns), [turns]);
   const count = sources.length;
-  const { claims } = useMemo(() => selectChatCrossref(turns), [turns]);
 
   return (
     <div data-kb="root" className="flex h-full min-h-0 flex-col">
@@ -168,23 +116,9 @@ export function KnowledgeBase({ titleId }: { titleId: string }) {
           fadeSize={28}
           className="-mx-4 mt-2 flex-1"
           viewportClassName={cn("overflow-y-auto px-4", NO_SCROLLBAR)}
-          viewportLabel={claims.length > 0 ? "Claims and sources" : "Sources"}
+          viewportLabel="Sources"
           viewportProps={{ "data-kb": "scroll" }}
         >
-          {/* the chat's cross-referenced claims, then its sources, all under the fades */}
-          {claims.length > 0 && (
-            <>
-              <section data-kb="claims" aria-label="Claims">
-                <h3 className="text-[12px] leading-4 font-medium text-plane-faint">Claims</h3>
-                <ul className="mt-0.5 flex flex-col divide-y divide-plane-border">
-                  {claims.map((claim) => (
-                    <ClaimRow key={claim.id} claim={claim} />
-                  ))}
-                </ul>
-              </section>
-              <h3 className="mt-3 mb-1 text-[12px] leading-4 font-medium text-plane-faint">Sources</h3>
-            </>
-          )}
           <ul aria-label="Sources" className="flex flex-col">
             {sources.map((source) => (
               <SourceRow key={source.url} source={source} />
