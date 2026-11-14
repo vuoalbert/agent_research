@@ -80,6 +80,16 @@ export const THREAD_COLUMN = DOCK_COLUMN;
 export const DOCK_SWAP = { duration: 0.45, ease: [0.32, 0.72, 0, 1] } as const;
 
 /**
+ * The thread's scroll once the reader is talking in it: a sent message gliding
+ * up to the top, and the view easing after the reply as it streams. The swap's
+ * curve, a little shorter — it covers up to a viewport (~720px) and has to
+ * keep pace with a reply that retargets it every few tokens. A fixed duration
+ * rather than the browser's `scroll-behavior: smooth`, whose duration grows
+ * with the distance (270ms for 120px, 665ms for a viewport, measured).
+ */
+export const THREAD_GLIDE = { duration: 0.4, ease: [0.32, 0.72, 0, 1] } as const;
+
+/**
  * The ribbon mark behind the composer, and the band where it stops being drawn.
  *
  * It replaces a 400px lucide `Layers` diamond that drew here in outline. The
