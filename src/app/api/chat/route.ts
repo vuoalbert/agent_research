@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
-import { TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } from "./tavily";
+import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } from "./tavily";
 
 /**
  * POST /api/chat — one turn of Agent Research, streamed.
@@ -15,7 +15,7 @@ import { TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } from "./tavily";
  * Request:  { messages: { role: "user" | "assistant", content: string }[] }
  * Response: text/event-stream of
  *             event: delta   data: {"text": "..."}
- *             event: tool    data: {"id","name":"Tavily","query","status":"running"}
+ *             event: tool    data: {"id","name":"Tavily","action"?:"read","query","status":"running"}
  *                            data: {"id","status":"done","sources":[{"title","url"}]}
  *                            data: {"id","status":"error","message"}
  *             event: done    data: {}
@@ -36,12 +36,21 @@ export const dynamic = "force-dynamic";
 const MODEL = "claude-opus-5-5";
 const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
-/** enough for a few searches and the answer after them */
-const MAX_AGENT_TURNS = 8;
-const SYSTEM_PROMPT =
-  "You are Agent Research, an AI assistant. Be concise. " +
-  "Use the tavily_search tool when a question needs current or external information, " +
-  "and cite the sources you used by name and URL.";
+/** enough for a few searches, a couple of reads, and the answer after them */
+const MAX_AGENT_TURNS = 12;
+const SYSTEM_PROMPT = [
+  "You are Agent Research, an AI assistant. Be concise.",
+  "",
+  "When a question needs current or external facts, research it:",
+  "1. Search with tavily_search.",
+  "2. Pick 2-4 independent sources, preferably primary or official ones, and read them with tavily_extract.",
+  "3. Cross-reference the key facts (numbers, dates, names, claims) across at least two sources.",
+  "4. Say where the sources agree, and flag any disagreement explicitly: which source says what.",
+  "5. When sources conflict, prefer the primary or official one and say why.",
+  "Cite inline by source name with a link, e.g. [Microsoft](https://news.microsoft.com/...).",
+  "Do not mention how many sources you read or searches you ran.",
+  "Keep the answer natural and to the point. Questions that don't need outside facts get a direct answer, no research.",
+].join("\n");
 
 type Turn = { role: "user" | "assistant"; content: string };
 
@@ -105,7 +114,7 @@ export async function POST(request: Request) {
             systemPrompt: SYSTEM_PROMPT,
             // No built-in tools and no filesystem settings: `tools: []` turns the
             // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
-            // and hooks out. The one tool is Tavily search, pre-approved;
+            // and hooks out. The tools are Tavily search and read, pre-approved;
             // `dontAsk` denies anything else rather than prompting.
             tools: [],
             settingSources: [],
@@ -114,7 +123,7 @@ export async function POST(request: Request) {
                 if (!abort.signal.aborted) send(controller, "tool", activity);
               }),
             },
-            allowedTools: [TAVILY_TOOL_ID],
+            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,

@@ -53,6 +53,8 @@ export type Source = { title: string; url: string };
 export type ToolCall = {
   id: string;
   name: string;
+  /** "read" for a page read (tavily_extract); absent for a search, and on chats saved before reads */
+  action?: "read";
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
@@ -453,7 +455,7 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
 
 /** the route's `tool` frame: a call starting, or one it started ending */
 type ToolEvent =
-  | { id: string; name: string; query: string; status: "running" }
+  | { id: string; name: string; action?: "read"; query: string; status: "running" }
   | { id: string; status: "done"; sources?: Source[] }
   | { id: string; status: "error" };
 
@@ -462,7 +464,16 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
   const list = tools ?? [];
   if (event.status === "running") {
     if (list.some((call) => call.id === event.id)) return [...list];
-    return [...list, { id: event.id, name: event.name, query: event.query, status: "running" }];
+    return [
+      ...list,
+      {
+        id: event.id,
+        name: event.name,
+        ...(event.action === "read" ? { action: "read" as const } : {}),
+        query: event.query,
+        status: "running",
+      },
+    ];
   }
   return list.map((call) =>
     call.id !== event.id
@@ -489,8 +500,26 @@ function updateTools(chatId: string, messageId: string, update: (tools: ToolCall
 }
 
 /**
- * Every source a chat's searches turned up, de-duplicated by URL in the order
- * they were first seen. Tolerates turns saved before tools existed.
+ * The key two URLs share when they are the same page: no scheme, no `www.`,
+ * lower-case host, no trailing slash, no fragment. Search and read often name
+ * one page both ways (`https://www.x.com/a/` vs `http://x.com/a`).
+ */
+export function sourceKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    const port = u.port ? `:${u.port}` : "";
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${host}${port}${path}${u.search}`;
+  } catch {
+    return url.trim().replace(/\/+$/, "");
+  }
+}
+
+/**
+ * Every source a chat's searches and reads turned up, de-duplicated by page
+ * (see `sourceKey`) in the order they were first seen. Tolerates turns saved
+ * before tools existed.
  */
 export function selectChatSources(messages: readonly Message[] | undefined): Source[] {
   const seen = new Set<string>();
@@ -498,8 +527,10 @@ export function selectChatSources(messages: readonly Message[] | undefined): Sou
   for (const message of messages ?? []) {
     for (const call of Array.isArray(message.tools) ? message.tools : []) {
       for (const source of call.sources ?? []) {
-        if (!source || typeof source.url !== "string" || seen.has(source.url)) continue;
-        seen.add(source.url);
+        if (!source || typeof source.url !== "string") continue;
+        const key = sourceKey(source.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
         sources.push({ title: source.title || source.url, url: source.url });
       }
     }

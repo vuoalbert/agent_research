@@ -8,6 +8,7 @@ import {
   newChat,
   selectChatSources,
   sendMessage,
+  sourceKey,
   stopStreaming,
   type Message,
 } from "@/lib/agent-store";
@@ -144,6 +145,44 @@ describe("agent store — tool calls", () => {
     ];
     expect(selectChatSources(messages)).toEqual([A, B, C]);
     expect(selectChatSources(undefined)).toEqual([]);
+  });
+
+  it("treats www., a trailing slash and http vs https as the same source", () => {
+    expect(sourceKey("https://www.Minecraft.net/en-us/")).toBe(sourceKey("http://minecraft.net/en-us"));
+    expect(sourceKey("https://x.com/a?b=1")).not.toBe(sourceKey("https://x.com/a?b=2"));
+    const messages: Message[] = [
+      {
+        id: "a",
+        role: "assistant",
+        content: "",
+        createdAt: 0,
+        tools: [
+          { id: "1", name: "Tavily", query: "q", status: "done", sources: [{ title: "Sales", url: "https://www.minecraft.net/sales/" }] },
+          {
+            id: "2",
+            name: "Tavily",
+            action: "read",
+            query: "minecraft.net",
+            status: "done",
+            sources: [
+              { title: "Sales page", url: "http://minecraft.net/sales" },
+              { title: "Wiki", url: "https://en.wikipedia.org/wiki/Minecraft" },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(selectChatSources(messages)).toEqual([
+      { title: "Sales", url: "https://www.minecraft.net/sales/" },
+      { title: "Wiki", url: "https://en.wikipedia.org/wiki/Minecraft" },
+    ]);
+  });
+
+  it("keeps a read's action on the call; a search has none", () => {
+    const read = applyToolEvent(undefined, { id: "r", name: "Tavily", action: "read", query: "a.com", status: "running" });
+    expect(read).toEqual([{ id: "r", name: "Tavily", action: "read", query: "a.com", status: "running" }]);
+    const search = applyToolEvent(undefined, { id: "s", name: "Tavily", query: "q", status: "running" });
+    expect(search[0]).not.toHaveProperty("action");
   });
 
   it("applyToolEvent ignores a repeated start and an end for an unknown call", () => {
