@@ -1,9 +1,8 @@
-import { PromptInput } from "@/components/prompt-input";
+import { AiPane } from "@/components/ai/pane";
+import { Shell } from "@/components/shell";
+import { defaultView } from "@/lib/navigation";
 
-export default function Home() {
-  return (
-    <main className="flex min-h-dvh items-center justify-center bg-background px-4">
-      <PromptInput />
-    </main>
-  );
+/** `/` — the AI app: the shell with the conversation pane as its content card. */
+export default function Page() {
+  return <Shell view={defaultView()} content={<AiPane />} />;
 }

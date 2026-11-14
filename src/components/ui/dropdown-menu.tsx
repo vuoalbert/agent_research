@@ -2,6 +2,10 @@
 
 import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
+
+import { DURATION, EASE, exitDuration,
+  useReduced,
+} from "@/lib/motion-tokens"
 import { cn } from "cn"
 import { ChevronRightIcon, CheckIcon } from "lucide-react"
 
@@ -17,6 +21,24 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
+/**
+ * The menu grows from its anchor corner: 0.96 -> 1 with a fade over the base
+ * duration, closing at 0.75 of that.
+ *
+ * This is the one surface in the motion pass that is **not** driven by Motion,
+ * and not for want of trying. Base UI owns the popup's mount and unmount, and
+ * two attempts to hand the node to Motion both failed to animate: passing
+ * `<motion.div/>` to the Popup's `render` prop (Base UI merges its own style
+ * over Motion's inline transform), and wrapping the children in a div Motion
+ * owns outright. Sampled every frame in a real browser, both went straight from
+ * absent to `transform: none, opacity: 1` — no intermediate frames, with
+ * `prefers-reduced-motion` confirmed false. A JS animation also cannot run on
+ * close, because Base UI unmounts the node rather than waiting for one.
+ *
+ * So the animation is CSS, but the *numbers* are not: duration, easing and the
+ * exit ratio are read from motion-tokens like everything else, and reduced
+ * motion collapses the duration to zero.
+ */
 function DropdownMenuContent({
   align = "start",
   alignOffset = 0,
@@ -29,6 +51,9 @@ function DropdownMenuContent({
     MenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
+  const reduce = useReduced()
+  const { children, ...popupProps } = props
+
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
@@ -38,11 +63,34 @@ function DropdownMenuContent({
         side={side}
         sideOffset={sideOffset}
       >
+        {/* Motion drives the open, not tailwindcss-animate: 0.96 -> 1 with a
+            fade over the base duration, growing from the anchor corner —
+            `origin-(--transform-origin)` is the corner Base UI computed from
+            the placement, so the menu appears to come out of its trigger.
+            The close is Base UI's: it owns the unmount, and it waits on the CSS
+            transition below (exit = 0.75 x enter = 90ms) before removing the
+            popup. Motion cannot run an exit on a node it does not unmount. */}
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
-          className={cn("z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95", className )}
-          {...props}
-        />
+          className={cn(
+            "z-50 max-h-(--available-height) w-(--anchor-width) min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none",
+            // grows from the anchor corner: origin-(--transform-origin) is the
+            // corner Base UI computed from the placement
+            "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95",
+            "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 data-closed:overflow-hidden",
+            className,
+          )}
+          /* Durations and easing still come from the tokens — see the note on
+             this component for why the animation itself is CSS here. */
+          style={{
+            animationDuration: `${(reduce ? 0 : DURATION.base) * 1000}ms`,
+            animationTimingFunction: `cubic-bezier(${EASE.join(",")})`,
+            ["--exit-duration" as string]: `${exitDuration(DURATION.base) * 1000}ms`,
+          }}
+          {...popupProps}
+        >
+          {children}
+        </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
   )
