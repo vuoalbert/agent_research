@@ -145,7 +145,6 @@ export function SubagentsBlock({
                 variant="nav"
                 aria-expanded={expanded}
                 onClick={() => toggle(sub.id)}
-                title={expanded ? "Hide its searches" : "Show its searches"}
                 className="h-auto w-full min-w-0 items-start justify-start gap-2 rounded-[6px] border-0 px-1.5 py-1.5 text-left font-normal whitespace-normal text-[var(--ai-ink)] hover:bg-[var(--ai-tint)] focus-visible:ring-2 focus-visible:ring-[#D6D7D9] active:not-aria-[haspopup]:translate-y-0"
               >
                 <span className="flex h-5 items-center">

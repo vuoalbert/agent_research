@@ -20,7 +20,7 @@ const MAX_REPLY = 300;
 
 const MODEL = "claude-opus-5-5";
 
-const NODE_KINDS = ["chat", "search", "page"] as const;
+const NODE_KINDS = ["chat", "subagent", "search", "page"] as const;
 const LINK_KINDS = ["asked", "built-on", "found", "read", "cross-ref", "agrees", "conflicts"] as const;
 
 const RequestSchema = z.object({
@@ -72,8 +72,8 @@ export function answerJsonSchema(): Record<string, unknown> {
 }
 
 export const SYSTEM_PROMPT = [
-  "You navigate a research graph for the user. Nodes are chats (conversations), searches (queries a chat ran) and pages (sources).",
-  "Links: asked (chat → its first search), built-on (search → next search), found (search → page it found),",
+  "You navigate a research graph for the user. Nodes are chats (conversations), subagents (research helpers a chat sent out on one angle each), searches (queries a chat or subagent ran) and pages (sources).",
+  "Links: asked (chat → its first search or a subagent; subagent → its first search), built-on (search → next search), found (search → page it found),",
   "read (search or chat → page it opened), cross-ref (pages read together), agrees (pages supporting the same claim),",
   "conflicts (one page contradicts another).",
   "",

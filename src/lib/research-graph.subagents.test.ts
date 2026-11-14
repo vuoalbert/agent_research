@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import { parseRequest } from "@/app/api/graph-chat/navigate";
 import type { Chat, Message, ToolCall } from "@/lib/agent-store";
+import { graphChatPayload } from "@/lib/graph-highlight";
 import { buildResearchGraph, chatNodeId, pageNodeId, subagentNodeId } from "@/lib/research-graph";
 
 /** The Force graph with subagents: chat → subagent → its searches → their pages. */
@@ -75,5 +77,12 @@ describe("buildResearchGraph — subagents", () => {
   it("still places a subagent's call whose group is missing", () => {
     const graph = buildResearchGraph([chat], { c1: [ask, turn([own("x1", "z", { sources: [src("https://a.com")] })])] });
     expect(graph.nodes.find((n) => n.kind === "subagent")).toMatchObject({ label: "Subagent" });
+  });
+
+  it("is a graph the graph chat accepts", () => {
+    const graph = buildResearchGraph([chat], { c1: [ask, turn([group, own("a1", "a", { sources: [src("https://a.com")] })])] });
+    const parsed = parseRequest({ question: "which subagent found a.com?", graph: graphChatPayload(graph) });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.graph.nodes.filter((n) => n.kind === "subagent")).toHaveLength(2);
   });
 });

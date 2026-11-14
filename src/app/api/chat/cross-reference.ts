@@ -76,10 +76,17 @@ export function __clearPageCache() {
  * One request's view of the sources: the chat's (oldest first), then each one
  * this request sees, a re-seen page moving to the end. Full page text a read
  * returned goes into the shared cache; search excerpts stay per request.
+ *
+ * When there are more sources than one cross-reference takes, the pages that
+ * were read in full come first: they are the ones a researcher (the chat
+ * Claude or one of its subagents) picked as worth reading, and their text is
+ * already cached, so they cost no further Extract credits.
  */
 export function createResearchLog(chatSources: readonly Source[] = []) {
   const sources = new Map<string, Source>();
   const excerpts = new Map<string, string>();
+  /** pages this request read in full, by sourceKey */
+  const read = new Set<string>();
   const touch = (source: Source) => {
     const key = sourceKey(source.url);
     const previous = sources.get(key);
@@ -92,14 +99,19 @@ export function createResearchLog(chatSources: readonly Source[] = []) {
     recordPages(pages: readonly PageSeen[]) {
       for (const page of pages) {
         touch({ url: page.url, title: page.title });
+        if (page.full && page.text) read.add(sourceKey(page.url));
         if (!page.text) continue;
         if (page.full) cacheSet(page.url, { title: page.title, text: page.text });
         else if (!excerpts.has(sourceKey(page.url))) excerpts.set(sourceKey(page.url), page.text);
       }
     },
-    /** the `limit` most recently seen sources, oldest of them first */
+    /** up to `limit` sources — the most recently read in full, then the most recently seen — oldest first */
     recent(limit = MAX_CROSSREF_SOURCES): Source[] {
-      return [...sources.values()].slice(-limit);
+      const keys = [...sources.keys()];
+      const full = keys.filter((key) => read.has(key)).slice(-limit);
+      const rest = keys.filter((key) => !read.has(key));
+      const chosen = new Set([...full, ...(full.length < limit ? rest.slice(-(limit - full.length)) : [])]);
+      return keys.filter((key) => chosen.has(key)).map((key) => sources.get(key)!);
     },
     excerpt(url: string): string | undefined {
       return excerpts.get(sourceKey(url));

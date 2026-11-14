@@ -149,6 +149,22 @@ describe("cross_reference", () => {
     expect(recent[0].url).toBe("https://s6.com/");
   });
 
+  it("puts pages read in full first when there are more sources than it takes", () => {
+    const log = createResearchLog();
+    // a subagent read two pages early; then 25 search hits pile up after them
+    log.recordPages([
+      { url: "https://read-a.com/", title: "A", text: "full text A", full: true },
+      { url: "https://read-b.com/", title: "B", text: "full text B", full: true },
+    ]);
+    log.recordPages(Array.from({ length: 25 }, (_, i) => ({ url: `https://hit${i}.com/`, title: `${i}`, text: "x", full: false })));
+    const recent = log.recent();
+    expect(recent).toHaveLength(20);
+    // both reads kept, in log order (oldest first), then the 18 newest hits
+    expect(recent.slice(0, 2).map((s) => s.url)).toEqual(["https://read-a.com/", "https://read-b.com/"]);
+    expect(recent[2].url).toBe("https://hit7.com/");
+    expect(recent.at(-1)!.url).toBe("https://hit24.com/");
+  });
+
   it("is an error, not a crash, with too few sources or a failing analysis", async () => {
     const lone = setup([{ title: "a", url: MC }]);
     const few = await lone.tool.handler({ topic: "t" }, {});
