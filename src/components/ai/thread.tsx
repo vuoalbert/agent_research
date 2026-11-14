@@ -38,6 +38,7 @@
  *   Reduced motion never glides.
  */
 
+import { Wrench } from "lucide-react";
 import {
   AnimatePresence,
   animate,
@@ -57,7 +58,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from "@/components/ui/message-scroller";
-import type { Message } from "@/lib/agent-store";
+import type { Message, ToolCall } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
 const MotionContent = motion.create(MessageScrollerContent);
@@ -195,6 +196,37 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
   }, [on, viewportRef]);
 }
 
+/**
+ * One tool call, the way Claude Code prints its tool lines: a wrench, the
+ * tool's name, then what it was asked, cut to one line. It pulses while the
+ * call runs and says how many sources it brought back once it is done.
+ */
+function ToolRow({ call }: { call: ToolCall }) {
+  const count = call.sources?.length ?? 0;
+  return (
+    <div
+      data-ai="tool"
+      data-status={call.status}
+      className={cn(
+        "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",
+        call.status === "running" && "motion-safe:animate-pulse",
+      )}
+    >
+      <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      <span className="shrink-0 font-medium text-[var(--ai-ink)]">{call.name}</span>
+      <span className="min-w-0 truncate text-[var(--ai-muted)]">{call.query}</span>
+      {call.status === "done" && (
+        <span className="shrink-0 text-[var(--ai-muted)]">
+          · {count} {count === 1 ? "source" : "sources"}
+        </span>
+      )}
+      {call.status === "error" && (
+        <span className="shrink-0 text-[var(--ai-muted)]">· failed</span>
+      )}
+    </div>
+  );
+}
+
 export function AiThread({
   messages,
   streaming = false,
@@ -280,27 +312,39 @@ export function AiThread({
                     <p className="rounded-xl bg-[var(--ai-chip)] px-4 py-2.5 text-[16px] leading-[25px] text-[var(--ai-ink)]">
                       {message.content}
                     </p>
-                  ) : message.content === "" ? (
-                    /* The turn exists before its first token does, so the reader
-                       has something to watch: three bars on the text's own rhythm. */
-                    <span
-                      data-ai="pending"
-                      role="status"
-                      aria-label={streaming ? "Agent Research is replying" : undefined}
-                      className="flex flex-col gap-2 px-1 py-2"
-                    >
-                      {[220, 300, 160].map((width, i) => (
-                        <span
-                          key={width}
-                          className="block h-[11px] rounded-full bg-[var(--ai-chip)] motion-safe:animate-pulse"
-                          style={{ width, animationDelay: `${i * 140}ms` }}
-                        />
-                      ))}
-                    </span>
                   ) : (
-                    <p className="px-1 py-2 text-[16px] leading-[25px] text-[var(--ai-muted)]">
-                      {message.content}
-                    </p>
+                    <>
+                      {/* the tool calls this reply made, in order, above its text */}
+                      {message.tools && message.tools.length > 0 && (
+                        <div data-ai="tools" className="flex flex-col gap-1 pt-2">
+                          {message.tools.map((call) => (
+                            <ToolRow key={call.id} call={call} />
+                          ))}
+                        </div>
+                      )}
+                      {message.content === "" ? (
+                        /* The turn exists before its first token does, so the reader
+                           has something to watch: three bars on the text's own rhythm. */
+                        <span
+                          data-ai="pending"
+                          role="status"
+                          aria-label={streaming ? "Agent Research is replying" : undefined}
+                          className="flex flex-col gap-2 px-1 py-2"
+                        >
+                          {[220, 300, 160].map((width, i) => (
+                            <span
+                              key={width}
+                              className="block h-[11px] rounded-full bg-[var(--ai-chip)] motion-safe:animate-pulse"
+                              style={{ width, animationDelay: `${i * 140}ms` }}
+                            />
+                          ))}
+                        </span>
+                      ) : (
+                        <p className="px-1 py-2 text-[16px] leading-[25px] text-[var(--ai-muted)]">
+                          {message.content}
+                        </p>
+                      )}
+                    </>
                   )}
                 </MotionItem>
               ))}
