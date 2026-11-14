@@ -21,10 +21,12 @@ import {
 import { cn } from "@/lib/utils";
 
 import { KnowledgeBase } from "@/components/knowledge-base";
+import { useWatchUpdates } from "@/components/telem/use-watch";
+import { useAgentStore } from "@/lib/agent-store";
 import { References } from "@/components/references";
 
 /**
- * SideTabs — five labelled handles hanging inward from the chat card's right
+ * SideTabs — six labelled handles hanging inward from the chat card's right
  * edge, each one a browser tab turned on its side: the base, with its two
  * concave flares, sits on the card's right border and the rounded end reaches
  * left into the chat. Each carries its name written down the tab (top to
@@ -81,8 +83,12 @@ export const SIDE_TAB_REACH = 34;
  * card's right side an open panel and its tab take up, in px.
  */
 export const SIDE_PANEL_INSET = "--side-panel-inset";
-/** the tab's body, end to end along the card edge (flares not included) */
-const LENGTH = 124;
+/**
+ * The tab's body, end to end along the card edge (flares not included). Six
+ * tabs of 112 (+16 of flares, 8 between) run 808px: they fit between y=56 and
+ * the card's bottom (y=891) at 1440x900.
+ */
+const LENGTH = 112;
 /** radius of the two rounded inner corners */
 const END = 12;
 /** radius of the two concave flares where the tab meets the card border */
@@ -94,6 +100,7 @@ export const SIDE_TAB_LABELS = [
   "World Labs",
   "Force graph",
   "Visualize",
+  "Telem",
 ] as const;
 export type SideTabLabel = (typeof SIDE_TAB_LABELS)[number];
 /**
@@ -107,6 +114,7 @@ export const SIDE_TAB_KIND: Record<SideTabLabel, "side" | "full"> = {
   "World Labs": "full",
   "Force graph": "full",
   Visualize: "full",
+  Telem: "full",
 };
 
 /** the box: the reach, plus the card's 1px border column on the right */
@@ -239,6 +247,9 @@ export function SideTabs({ className }: { className?: string }) {
   }
 
   const tabView = useTabView();
+  /* the Telem tab wears a dot while the active chat's watch has news */
+  const { activeChatId } = useAgentStore();
+  const watchNews = Boolean(useWatchUpdates(activeChatId).updates?.fresh.findings);
   const toggle = (label: SideTabLabel, opener?: HTMLElement) => {
     if (tabView && SIDE_TAB_KIND[label] === "full") return tabView.openView(label, opener ?? null);
     show(open === label ? null : label);
@@ -347,6 +358,7 @@ export function SideTabs({ className }: { className?: string }) {
             hidden={open !== null && open !== label}
             controls={present.includes(label) ? `${id}-panel-${index}` : undefined}
             reduce={reduce}
+            dot={label === "Telem" && watchNews}
             onToggle={(event) => toggle(label, event.currentTarget)}
           />
         ))}
@@ -362,6 +374,7 @@ function SideTab({
   hidden,
   controls,
   reduce,
+  dot = false,
   onToggle,
 }: {
   label: SideTabLabel;
@@ -370,6 +383,8 @@ function SideTab({
   hidden: boolean;
   controls: string | undefined;
   reduce: boolean;
+  /** a small "new" mark at the tab's top end */
+  dot?: boolean;
   onToggle: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   /* off its resting place, leftward, means riding a panel */
@@ -418,6 +433,7 @@ function SideTab({
         >
           {label}
         </text>
+        {dot && <circle data-side-tab-dot="" cx={LABEL_X} cy={top + 9} r={3} className="fill-plane-brand" />}
       </svg>
     </motion.button>
   );

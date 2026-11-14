@@ -60,6 +60,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from "@/components/ui/message-scroller";
+import { WatchToolRow } from "@/components/telem/watch-tool-row";
 import { VisualizeToolRow } from "@/components/visualize/visualize-tool-row";
 import { WorldToolRow } from "@/components/worlds/world-tool-row";
 import type { Message, ToolCall } from "@/lib/agent-store";
@@ -211,6 +212,7 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
   if (call.action === "visualize" || call.action === "visualize-message") return <VisualizeToolRow call={call} />;
   // the chat's World Labs world: a globe, and it follows the world
   if (call.action === "world") return <WorldToolRow call={call} />;
+  if (call.action === "watch") return <WatchToolRow call={call} />;
   if (call.action === "subagents") {
     return <SubagentsBlock call={call} calls={calls} renderCall={(own) => <ToolRow call={own} />} />;
   }

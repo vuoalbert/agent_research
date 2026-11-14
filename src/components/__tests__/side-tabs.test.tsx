@@ -26,7 +26,7 @@ function xs(d: string) {
 const tab = (name: string) => screen.getByRole("button", { name });
 
 describe("SideTabs", () => {
-  it("renders the five named tabs in order, as closed toggles", () => {
+  it("renders the six named tabs in order, as closed toggles", () => {
     const { container } = render(<SideTabs />);
     const stack = container.querySelector("[data-side-tabs]") as HTMLElement;
     const tabs = within(stack).getAllByRole("button");
@@ -37,8 +37,9 @@ describe("SideTabs", () => {
       "World Labs",
       "Force graph",
       "Visualize",
+      "Telem",
     ]);
-    expect(SIDE_TAB_LABELS).toHaveLength(5);
+    expect(SIDE_TAB_LABELS).toHaveLength(6);
     expect(tabs.every((t) => t.getAttribute("aria-expanded") === "false")).toBe(true);
     expect(screen.queryByRole("region")).toBeNull();
     // the gaps between tabs stay click-through to the chat
@@ -97,7 +98,7 @@ describe("SideTabs", () => {
     fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
-    expect(screen.getAllByRole("button")).toHaveLength(5);
+    expect(screen.getAllByRole("button")).toHaveLength(6);
     expect(tab("References").getAttribute("aria-expanded")).toBe("false");
   });
 
