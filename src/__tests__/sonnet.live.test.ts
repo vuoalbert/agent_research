@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 /**
- * The only test that actually spends a turn on Sonnet 5. Skipped by default —
+ * The only test that actually spends a turn on the live model (Opus 5.5). Skipped by default —
  * it needs the dev server up *and* a working Claude Code login on this machine,
  * and it is the one place the whole path (route -> Agent SDK -> local Claude
  * credentials -> SSE) is exercised for real.
@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 const URL = process.env.PLAYWRIGHT_URL;
 const suite = URL && process.env.LIVE_SONNET ? describe : describe.skip;
 
-suite("Sonnet 5, live", () => {
+suite("Opus 5.5, live", () => {
   it("streams a real answer about packing for a cold camping trip", async () => {
     const started = Date.now();
     const response = await fetch(`${URL}/api/chat`, {

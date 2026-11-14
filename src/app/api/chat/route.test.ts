@@ -61,12 +61,14 @@ describe("POST /api/chat", () => {
     await readAll(response);
   });
 
-  it("asks Sonnet 5 for one turn, with no tools and no repo settings", async () => {
+  it("asks Opus 5.5 at high effort for one turn, with no tools and no repo settings", async () => {
     query.mockReturnValue(stream(delta("x")));
     await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
 
     const { options, prompt } = query.mock.calls[0][0];
-    expect(options.model).toBe("claude-sonnet-5");
+    expect(options.model).toBe("claude-opus-5-5");
+    expect(options.effort).toBe("high");
+    expect(options.thinking).toEqual({ type: "adaptive" });
     expect(options.systemPrompt).toBe(
       "You are Agent Research, an AI assistant. Be concise.",
     );

@@ -26,7 +26,10 @@ export const runtime = "nodejs";
 /** the request runs as long as the model does; never prerender this */
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-5";
+/** Claude Opus 5.5 at high effort. Opus 5.5 defaults to `medium`, so it is set
+ *  explicitly; its thinking is always on (adaptive) and cannot be disabled. */
+const MODEL = "claude-opus-5-5";
+const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
 const SYSTEM_PROMPT =
   "You are Agent Research, an AI assistant. Be concise.";
@@ -88,6 +91,8 @@ export async function POST(request: Request) {
           prompt: buildPrompt(turns),
           options: {
             model: MODEL,
+            effort: EFFORT,
+            thinking: { type: "adaptive" },
             systemPrompt: SYSTEM_PROMPT,
             // one turn, no tools, no filesystem settings: this is a chat reply,
             // not an agent. `tools: []` disables the built-ins; `settingSources:
