@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installTelemFakeFrom } from "@/test/telem-fake";
+
 /**
  * deploy_subagents with the Agent SDK mocked: the input it accepts, that the
  * subagents run in parallel (at most 4 at a time), what each one may call, and
@@ -69,7 +71,8 @@ beforeEach(() => {
   query.mockReset();
   search.mockReset();
   extract.mockReset();
-  vi.stubEnv("TAVILY_API_KEY", "test-key");
+  vi.stubEnv("TAVILY_API_KEY", "");
+  installTelemFakeFrom({ search, extract });
 });
 
 describe("validateSubagents", () => {
@@ -122,14 +125,14 @@ describe("deploy_subagents", () => {
       expect(options.abortController).toBeInstanceOf(AbortController);
       expect(Object.keys(options.mcpServers)).toEqual(["research"]);
       expect(options.mcpServers.research.tools.map((t) => t.name)).toEqual([
-        "tavily_search",
-        "tavily_extract",
+        "web_search",
+        "web_read",
         "vault_search",
         "vault_read",
       ]);
       expect(options.allowedTools).toEqual([
-        "mcp__research__tavily_search",
-        "mcp__research__tavily_extract",
+        "mcp__research__web_search",
+        "mcp__research__web_read",
         "mcp__research__vault_search",
         "mcp__research__vault_read",
       ]);
@@ -208,8 +211,8 @@ describe("deploy_subagents", () => {
     const own = frames.filter((f) => f.parentId === groupId);
     const agents = last.subagents.map((s) => s.id);
     expect(own.filter((f) => f.status === "running")).toEqual([
-      expect.objectContaining({ name: "Tavily", query: "Angle 1 news", parentId: groupId, agentId: agents[0] }),
-      expect.objectContaining({ name: "Tavily", query: "Angle 2 news", parentId: groupId, agentId: agents[1] }),
+      expect.objectContaining({ name: "Telem", query: "Angle 1 news", parentId: groupId, agentId: agents[0] }),
+      expect.objectContaining({ name: "Telem", query: "Angle 2 news", parentId: groupId, agentId: agents[1] }),
     ]);
     expect(own.filter((f) => f.status === "done")).toHaveLength(2);
     expect(own.find((f) => f.status === "done")!.sources).toEqual([{ title: "QuantumScape Q3", url: "https://ir.quantumscape.com/q3" }]);
@@ -284,5 +287,43 @@ describe("deploy_subagents", () => {
     expect(text).toMatch(/^Subagent findings \(1 of 2 finished\)\. Compare them/);
     expect(text).toContain("### Subagent 1: Chemistry (finished)\nHeadline: sulfides lead");
     expect(text).toContain("### Subagent 2: Makers (did not finish)\nTimed out after 3 min");
+  });
+
+  it("gives each subagent its own Telem child trajectory and a different provider family", async () => {
+    const { createLineage } = await import("@/server/telem/client");
+    const telem = installTelemFakeFrom({
+      search: async () => ({ results: [{ title: "A", url: "https://a.example.com/x", content: "a" }] }),
+    });
+    query.mockImplementation((args: Args) =>
+      (async function* () {
+        const angle = args.prompt.match(/Your angle: (.+)/)![1];
+        await args.options.mcpServers.research.tools[0].handler({ query: `${angle} news` });
+        yield finished(`${angle} headline`);
+      })(),
+    );
+    const lineage = createLineage({ chatId: "chat-1", turnId: "turn-1", question: "solid-state batteries" });
+    await setup({ lineage }).run({
+      subagents: [...tasks(3), { title: "Chatter", task: "What do people post?", focus: "social" }],
+    });
+
+    const calls = telem.search.mock.calls.map(([q, options]) => ({ q: q as string, options: options as Record<string | symbol, unknown> }));
+    const byAngle = (angle: string) => calls.find((c) => c.q.startsWith(angle))!.options;
+    // deep, news, web in turn; "social" when the lead asked for it — routing off for the pin-only platforms
+    expect(byAngle("Angle 1")).toMatchObject({ providersInclude: ["exa", "parallel", "seltz"], autoRouting: "accuracy" });
+    expect(byAngle("Angle 2")).toMatchObject({ providersInclude: ["perplexity", "linkup", "tavily"] });
+    expect(byAngle("Angle 3")).toMatchObject({ providersInclude: ["brave", "you", "ceramic"] });
+    expect(byAngle("Chatter")).toMatchObject({
+      providersInclude: ["fetchlayer_x", "socialdatax_youtube", "apify_substack", "brave"],
+      autoRouting: "off",
+    });
+    // every subagent's call carries lineage: its own conversation, one shared parent (the turn that deployed them)
+    const envelopes = calls.map(({ options }) => {
+      const key = Object.getOwnPropertySymbols(options)[0];
+      return options[key] as { parent_node_key: string | null; session_key: string; ancestors: unknown[] };
+    });
+    expect(envelopes).toHaveLength(4);
+    expect(envelopes.every((e) => e.parent_node_key && e.ancestors.length === 1)).toBe(true);
+    expect(new Set(envelopes.map((e) => e.parent_node_key)).size).toBe(1);
+    expect(new Set(envelopes.map((e) => e.session_key)).size).toBe(4);
   });
 });

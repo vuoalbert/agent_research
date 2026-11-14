@@ -1,20 +1,20 @@
 import { query, tool } from "@anthropic-ai/claude-agent-sdk";
-import { tavily } from "@tavily/core";
 import { z } from "zod";
 
 import { deriveRelations, type Claim, type ClaimSource, type Crossref } from "@/lib/crossref";
 import { hostOf, sourceKey } from "@/lib/source-key";
+import { telemFetch, type TelemLineage } from "@/server/telem/client";
 
-import type { PageSeen, Source } from "./tavily";
+import type { PageSeen, Source } from "./web-tools";
 
 /**
  * `cross_reference` — checks every source of the chat against every other.
  *
  * The source set is the chat's sources the client sent with the request plus
  * whatever this request's searches and reads turned up, the 20 most recent.
- * Each page's text comes from Tavily Extract (cached per page in memory, so a
+ * Each page's text comes from Telem fetch (cached per page in memory, so a
  * second run over the same pages spends no credits), falling back to the
- * search excerpt. One nested, tool-less Claude call reads them all and returns
+ * search excerpt. The reads are part of the chat turn's Telem trajectory. One nested, tool-less Claude call reads them all and returns
  * claims with each source's stance and a verbatim quote; the source↔source
  * `agrees` / `conflicts` relations are derived from those in code.
  */
@@ -80,7 +80,7 @@ export function __clearPageCache() {
  * When there are more sources than one cross-reference takes, the pages that
  * were read in full come first: they are the ones a researcher (the chat
  * Claude or one of its subagents) picked as worth reading, and their text is
- * already cached, so they cost no further Extract credits.
+ * already cached, so they cost no further fetch credits.
  */
 export function createResearchLog(chatSources: readonly Source[] = []) {
   const sources = new Map<string, Source>();
@@ -286,25 +286,27 @@ const text = (value: string, isError = false) => ({
   ...(isError ? { isError: true } : {}),
 });
 
-/** fetch page text for the sources: cache, then one Extract batch, then excerpts */
-async function pageTexts(sources: readonly Source[], log: ResearchLog): Promise<LabelledPage[]> {
+/** fetch page text for the sources: cache, then Telem fetch (5 URLs a call, in parallel), then excerpts */
+async function pageTexts(
+  sources: readonly Source[],
+  log: ResearchLog,
+  { lineage, signal }: { lineage?: TelemLineage; signal?: AbortSignal } = {},
+): Promise<LabelledPage[]> {
   const missing = sources.filter((source) => !cacheGet(source.url));
-  const apiKey = process.env.TAVILY_API_KEY;
-  if (missing.length > 0 && apiKey) {
+  if (missing.length > 0) {
     try {
-      const response = await tavily({ apiKey }).extract(
+      const { pages: read, failed } = await telemFetch(
         missing.slice(0, MAX_CROSSREF_SOURCES).map((source) => source.url),
-        { extractDepth: "basic", format: "text" },
+        { lineage, caller: "crossref", goal: "Cross-reference the sources' claims", signal },
       );
-      for (const page of response.results ?? []) {
-        if (page.rawContent) cacheSet(page.url, { title: page.title || page.url, text: page.rawContent });
-      }
+      for (const page of read) cacheSet(page.url, { title: page.title || page.url, text: page.text });
       console.info(
-        `[cross_reference] extracted ${response.results?.length ?? 0} of ${missing.length} uncached pages ` +
-          `(${sources.length - missing.length} cached)`,
+        `[cross_reference] fetched ${read.length} of ${missing.length} uncached pages via Telem ` +
+          `(${failed.length} failed, ${sources.length - missing.length} cached)`,
       );
     } catch (error) {
-      console.warn("[cross_reference] extract failed; falling back to excerpts:", error);
+      if (signal?.aborted) throw error;
+      console.warn("[cross_reference] fetch failed; falling back to excerpts:", error);
     }
   }
 
@@ -327,11 +329,14 @@ export function createCrossReferenceTool({
   log,
   onActivity,
   signal,
+  lineage,
   analyse = analyseWithClaude,
 }: {
   log: ResearchLog;
   onActivity: (activity: CrossrefActivity) => void;
   signal?: AbortSignal;
+  /** the chat turn's Telem lineage, for the page reads */
+  lineage?: TelemLineage;
   analyse?: Analyse;
 }) {
   return tool(
@@ -353,7 +358,7 @@ export function createCrossReferenceTool({
       try {
         const sources = log.recent(MAX_CROSSREF_SOURCES);
         if (sources.length < 2) return fail("Cross-referencing needs at least two sources: search or read first.");
-        const pages = await pageTexts(sources, log);
+        const pages = await pageTexts(sources, log, { lineage, signal });
         if (pages.length < 2) return fail("Fewer than two sources had readable text to cross-reference.");
 
         const crossref = toCrossref(await analyse(topic, pages, signal), pages);

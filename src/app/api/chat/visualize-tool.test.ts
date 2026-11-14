@@ -13,8 +13,8 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 const { VISUALIZE_PROMPT, VISUALIZE_TOOL_ID, createVisualizeTurn, subjectFrom } = await import("./visualize-tool");
 const { parseCrossref, quantityOf, researchBrief } = await import("./visualize-brief");
 
-const SEARCH = "mcp__research__tavily_search";
-const EXTRACT = "mcp__research__tavily_extract";
+const SEARCH = "mcp__research__web_search";
+const EXTRACT = "mcp__research__web_read";
 const CROSSREF = "mcp__research__cross_reference";
 const RESEARCH = [SEARCH, EXTRACT, CROSSREF];
 
@@ -175,7 +175,7 @@ describe("every research turn ends with one figure", () => {
     expect(VISUALIZE_PROMPT).toMatch(/where sources disagree/);
     expect(VISUALIZE_PROMPT).toMatch(/attributable to specific sources/);
     expect(VISUALIZE_PROMPT).toMatch(/Don't make the answer longer/);
-    expect(VISUALIZE_PROMPT).toMatch(/After researching \(tavily_search, tavily_extract or cross_reference\), call visualize once/);
+    expect(VISUALIZE_PROMPT).toMatch(/After researching \(web_search, web_read or cross_reference\), call visualize once/);
     expect(VISUALIZE_PROMPT).toMatch(/Key numbers: [^]*Parts and relations: [^]*Conflicts: [^]*Object idea:/);
     expect(VISUALIZE_PROMPT).toMatch(/explicitly asks you to visualize, illustrate, diagram or draw something, call visualize with explicit: true/);
     expect(VISUALIZE_PROMPT).toMatch(/At most one visualize call per turn/);

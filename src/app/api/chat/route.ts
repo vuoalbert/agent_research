@@ -1,11 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+import { createLineage } from "@/server/telem/client";
 import { createTurnRecorder } from "@/server/vault/turn";
 
 import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
 import { parseSources } from "./sources";
 import { SUBAGENTS_TOOL_ID, createSubagentsTool } from "./subagents";
-import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type PageSeen, type Source } from "./tavily";
+import { RESEARCH_SERVER, WEB_READ_TOOL_ID, WEB_SEARCH_TOOL_ID, createWebServer, type PageSeen, type Source } from "./web-tools";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
 import {
   MESSAGE_VISUALIZE_TOOL_ID,
@@ -16,7 +17,7 @@ import {
 import { VISUALIZE_PROMPT, VISUALIZE_SERVER, VISUALIZE_TOOL_ID, createVisualizeTurn } from "./visualize-tool";
 import { createWorldTurn } from "./world-turn";
 
-const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
+const CROSSREF_TOOL_ID = `mcp__${RESEARCH_SERVER}__${CROSSREF_TOOL}`;
 
 /**
  * POST /api/chat — one turn of Agent Research, streamed.
@@ -33,8 +34,9 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *            chatId?: string }                             (names the turn's Research note in the vault)
  * Response: text/event-stream of
  *             event: delta   data: {"text": "..."}
- *             event: tool    data: {"id","name":"Tavily","action"?:"read","query","status":"running"}
- *                            data: {"id","status":"done","sources":[{"title","url"}]}
+ *             event: tool    data: {"id","name":"Telem","action"?:"read","query","status":"running"}
+ *                            data: {"id","status":"done","sources":[{"title","url"}],"providers"?:["exa",…]}
+ *                                  (saved chats from before Telem have "Tavily" rows; same shape)
  *                            data: {"id","status":"error","message"}
  *                            data: {"id","name":"Cross-reference","action":"crossref","query","status":"running"}
  *                              → {"id","status":"done","crossref":{"claims","relations"}}
@@ -79,8 +81,9 @@ const SYSTEM_PROMPT = [
   "",
   "When a question needs current or external facts, research it:",
   "1. Split the question into 3-4 complementary angles (e.g. the technology, the companies, the numbers, the open problems) and call deploy_subagents once, one subagent per angle,",
-  "   each with a short title and a self-contained task. They search with tavily_search and read pages with tavily_extract in parallel, and each returns its findings with source URLs.",
-  "2. Compare their findings: where they agree, where they disagree (which source says what), and what is missing. Fill a real gap yourself with tavily_search and tavily_extract, preferring primary or official sources.",
+  "   each with a short title and a self-contained task. They search with web_search and read pages with web_read (both Telem) in parallel, each drawing on a different family of search providers, and each returns its findings with source URLs.",
+  "   Give a subagent focus \"social\" only when what people post (X, YouTube, Substack) matters to the question.",
+  "2. Compare their findings: where they agree, where they disagree (which source says what), and what is missing. Fill a real gap yourself with web_search and web_read, preferring primary or official sources. web_search takes an optional platform (x, youtube, linkedin, maps, reviews, pubmed, sec, patents, …) when the question is about that platform's content.",
   "3. Cross-reference the key facts (numbers, dates, names, claims) across at least two sources.",
   "4. Say where the sources agree, and flag any disagreement explicitly: which source says what.",
   "5. When sources conflict, prefer the primary or official one and say why.",
@@ -162,7 +165,7 @@ export async function POST(request: Request) {
       const turn = createTurnRecorder({ chatId, question: turns[turns.length - 1].content, knownSources: chatSources });
       let answer = "";
       // a chat's first research turn starts its World Labs world (world-turn.ts)
-      const researchTools = [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID];
+      const researchTools = [WEB_SEARCH_TOOL_ID, WEB_READ_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID];
       const world = createWorldTurn({
         chatId,
         researchTools,
@@ -196,6 +199,8 @@ export async function POST(request: Request) {
         world.recordPages(pages);
       };
       const question = turns[turns.length - 1].content;
+      // the turn's Telem trajectory: the chat is one Telem session, its subagents child trajectories
+      const lineage = createLineage({ chatId, question });
       try {
         const run = query({
           prompt: buildPrompt(turns),
@@ -206,24 +211,26 @@ export async function POST(request: Request) {
             systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}\n${VISUALIZE_MESSAGE_PROMPT}`,
             // No built-in tools and no filesystem settings: `tools: []` turns the
             // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
-            // and hooks out. The tools are Tavily search and read, pre-approved;
+            // and hooks out. The tools are Telem search and read, pre-approved;
             // `dontAsk` denies anything else rather than prompting.
             tools: [],
             settingSources: [],
             mcpServers: {
-              [TAVILY_SERVER]: createTavilyServer(report, {
+              [RESEARCH_SERVER]: createWebServer(report, {
                 onPages,
+                lineage,
+                signal: abort.signal,
                 tools: [
-                  createCrossReferenceTool({ log, onActivity: report, signal: abort.signal }),
+                  createCrossReferenceTool({ log, onActivity: report, signal: abort.signal, lineage }),
                   ...createVaultTools({ onActivity: report }),
-                  createSubagentsTool({ onActivity: report, onPages, signal: abort.signal, question }),
+                  createSubagentsTool({ onActivity: report, onPages, signal: abort.signal, question, lineage }),
                 ],
               }),
               [VISUALIZE_SERVER]: visualize.server,
             },
             allowedTools: [
-              TAVILY_TOOL_ID,
-              EXTRACT_TOOL_ID,
+              WEB_SEARCH_TOOL_ID,
+              WEB_READ_TOOL_ID,
               CROSSREF_TOOL_ID,
               ...VAULT_TOOL_IDS,
               SUBAGENTS_TOOL_ID,

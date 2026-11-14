@@ -1,4 +1,4 @@
-import type { Source } from "./tavily";
+import type { Source } from "./web-tools";
 
 /** the most chat sources one request may carry */
 export const MAX_BODY_SOURCES = 60;

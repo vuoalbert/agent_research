@@ -43,7 +43,7 @@ export const VISUALIZE_TOOL_ID = `mcp__${VISUALIZE_SERVER}__${VISUALIZE_TOOL}`;
 export const VISUALIZE_PROMPT = [
   "Visualize (one figure at a time, built in the background in the Visualize tab, about 15-60 minutes):",
   "- While researching, collect material that visualizes well: concrete quantities with units and dates (time series, before/after), comparisons and rankings, the parts of a system and how they connect, cause→effect chains, and where sources disagree. Keep each claim crisp and attributable to specific sources. Don't make the answer longer for it.",
-  "- After researching (tavily_search, tavily_extract or cross_reference), call visualize once, near the end, with explicit: false — a subject that turns the findings into a physical, mechanical figure the anatomy skill can draw (a gauge, counter, balance, machine or cutaway whose parts and readout encode the key numbers and claims), and a brief in this structure:",
+  "- After researching (web_search, web_read or cross_reference), call visualize once, near the end, with explicit: false — a subject that turns the findings into a physical, mechanical figure the anatomy skill can draw (a gauge, counter, balance, machine or cutaway whose parts and readout encode the key numbers and claims), and a brief in this structure:",
   "  Key numbers: - value unit (date) — source host",
   "  Parts and relations: - entity/part → how it connects to or drives another",
   "  Conflicts: - source vs source on which claim",

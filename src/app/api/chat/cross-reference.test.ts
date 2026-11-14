@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installTelemFakeFrom } from "@/test/telem-fake";
+
 /**
- * cross_reference with Tavily and the nested Claude call mocked: which pages
+ * cross_reference with Telem (fake) and the nested Claude call mocked: which pages
  * it reads (and does not re-read), what the analysis turns into, and what goes
  * back to Claude and to the client.
  */
@@ -73,7 +75,8 @@ describe("cross_reference", () => {
     __clearPageCache();
     extract.mockReset();
     query.mockReset();
-    vi.stubEnv("TAVILY_API_KEY", "test-key");
+    vi.stubEnv("TAVILY_API_KEY", "");
+    installTelemFakeFrom({ extract });
   });
 
   it("checks the chat's sources plus this request's finds, and reports claims and relations", async () => {
@@ -89,7 +92,7 @@ describe("cross_reference", () => {
 
     expect(tool.name).toBe("cross_reference");
     expect(extract).toHaveBeenCalledTimes(1);
-    expect(extract).toHaveBeenCalledWith([MC, WIKI, NEWS], { extractDepth: "basic", format: "text" });
+    expect(extract).toHaveBeenCalledWith([MC, WIKI, NEWS], expect.objectContaining({ tier: "default", metadata: { caller: "crossref" } }));
     // the failed extract fell back to the search excerpt
     const pages = analyse.mock.calls[0][1] as { label: string; url: string; text: string }[];
     expect(pages.map((p) => [p.label, p.url])).toEqual([["S1", MC], ["S2", WIKI], ["S3", NEWS]]);
@@ -130,7 +133,7 @@ describe("cross_reference", () => {
     expect(second.analyse).toHaveBeenCalledTimes(1);
   });
 
-  it("does not re-extract a page tavily_extract already read in full", async () => {
+  it("does not re-fetch a page web_read already read in full", async () => {
     const { log, tool } = setup([]);
     log.recordPages([
       { url: MC, title: "MC", text: "x".repeat(500), full: true },

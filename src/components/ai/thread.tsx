@@ -38,7 +38,7 @@
  *   Reduced motion never glides.
  */
 
-import { BookOpen, Scale, Wrench } from "lucide-react";
+import { BookOpen, Radar, Scale, Wrench } from "lucide-react";
 import {
   AnimatePresence,
   animate,
@@ -206,6 +206,12 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
  * hosts for a page read — cut to one line. It pulses while the call runs.
  * A deploy_subagents group is a block of its own, holding its subagents' calls.
  */
+/** a Telem row's hover title: who answered and how long it took (never on the row itself) */
+function telemTitle({ providers, latencyMs }: NonNullable<ToolCall["telem"]>): string {
+  const time = latencyMs >= 1000 ? `${(latencyMs / 1000).toFixed(1)} s` : `${Math.round(latencyMs)} ms`;
+  return ["Telem", providers.join(", "), time].filter(Boolean).join(" · ");
+}
+
 function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCall[] }) {
   // a figure job: a box, and it follows the job rather than the call
   if (call.action === "visualize" || call.action === "visualize-message") return <VisualizeToolRow call={call} />;
@@ -220,11 +226,14 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
     : call.action === "read"
       ? `Reading ${call.query}`
       : call.query;
+  // a Telem search or read; rows saved before Telem keep their own name ("Tavily") and icon
+  const telem = call.name === "Telem";
   return (
     <div
       data-ai="tool"
       data-action={call.action ?? "search"}
       data-status={call.status}
+      title={telem && call.telem ? telemTitle(call.telem) : undefined}
       className={cn(
         "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",
         call.status === "running" && "motion-safe:animate-pulse",
@@ -233,6 +242,9 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
       {/* a cross-reference weighs the sources against each other */}
       {call.action === "crossref" || call.name === "Cross-reference" ? (
         <Scale aria-hidden data-icon="scale" size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      ) : telem ? (
+        /* Telem routes the call across search / fetch providers */
+        <Radar aria-hidden data-icon="radar" size={14} className="shrink-0 text-[var(--ai-muted)]" />
       ) : vault ? (
         /* notes kept from earlier research */
         <BookOpen aria-hidden data-icon="book-open" size={14} className="shrink-0 text-[var(--ai-muted)]" />
@@ -240,6 +252,7 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
         <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
       )}
       <span className="shrink-0 font-medium text-[var(--ai-ink)]">{call.name}</span>
+      {telem && call.action === "read" && <span className="shrink-0 text-[var(--ai-muted)]">·</span>}
       <span className="min-w-0 truncate text-[var(--ai-muted)]">{detail}</span>
       {call.status === "error" && (
         <span className="shrink-0 text-[var(--ai-muted)]">· failed</span>

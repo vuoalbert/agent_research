@@ -5,8 +5,10 @@ import path from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { installTelemFakeFrom } from "@/test/telem-fake";
+
 /**
- * The route and the vault together, with the Agent SDK and Tavily mocked: a
+ * The route and the vault together, with the Agent SDK mocked and Telem faked: a
  * researched turn lands in the vault after the stream closes, and the vault
  * tools report `Vault` rows.
  */
@@ -59,7 +61,8 @@ let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "route-vault-"));
   vi.stubEnv("VAULT_DIR", dir);
-  vi.stubEnv("TAVILY_API_KEY", "test-key");
+  vi.stubEnv("TAVILY_API_KEY", "");
+  installTelemFakeFrom({ search, extract });
   query.mockReset();
   search.mockReset();
   extract.mockReset();
@@ -98,8 +101,8 @@ function researchTurn(answer: string) {
           yield { type: "result", subtype: "success", result: "", structured_output: analysis };
         })()
       : (async function* () {
-          await handler("tavily_search")({ query: "minecraft copies sold" }, {});
-          await handler("tavily_extract")({ urls: [MOJANG, WIKI] }, {});
+          await handler("web_search")({ query: "minecraft copies sold" }, {});
+          await handler("web_read")({ urls: [MOJANG, WIKI] }, {});
           await handler("cross_reference")({ topic: "Minecraft sales" }, {});
           yield delta(answer);
         })(),

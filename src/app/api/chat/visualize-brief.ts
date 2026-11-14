@@ -16,7 +16,7 @@
 export type ResearchMaterial = {
   question: string;
   answer: string;
-  /** text results of tavily_search / tavily_extract */
+  /** text results of web_search / web_read */
   pages: string[];
   /** text results of cross_reference */
   crossrefs: string[];
