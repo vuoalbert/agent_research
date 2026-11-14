@@ -196,7 +196,8 @@ const COMPONENTS: Components = {
     <blockquote className={cn("my-3 border-l-2 border-[var(--ai-chip)] pl-4", className)} {...props} />
   ),
   hr: ({ node: _node, className, ...props }) => (
-    <hr className={cn("my-5 border-[var(--ai-chip)]", className)} {...props} />
+    /* no hairline: a `---` in a reply only adds space, it draws no rule */
+    <hr className={cn("my-5 border-0", className)} {...props} />
   ),
   table: ({ node: _node, className, ...props }) => (
     <div data-ai="md-table" className={cn("my-3 max-w-full overflow-x-auto", NO_SCROLLBAR)}>
