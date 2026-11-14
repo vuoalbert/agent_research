@@ -133,7 +133,9 @@ export function AiPane() {
                 transition={swap}
                 className="min-h-0 w-full flex-1"
               >
-                <AiThread messages={thread} streaming={isStreaming} />
+                {/* keyed per chat: a chat opened from the list gets a fresh
+                    scroller that lands on its last user message */}
+                <AiThread key={activeChat?.id} messages={thread} streaming={isStreaming} />
               </motion.div>
             ) : (
               /* The 35% the composer's top edge stands on, with nothing in it.

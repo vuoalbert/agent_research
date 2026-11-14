@@ -244,17 +244,20 @@ describe("AiPane", () => {
     expect(screen.queryByLabelText("Stop generating")).toBeNull();
   });
 
-  it("flows the thread from the top, not off the bottom", async () => {
+  it("anchors each sent message so it settles near the top, and follows the reply", async () => {
     pane();
     send("hello");
     const scroller = await waitFor(() => document.querySelector('[data-ai="thread"]') as HTMLElement);
-    // the list is the scroller's own child now — no filler element holding a
-    // short exchange down against the composer
-    const list = scroller.firstElementChild as HTMLElement;
-    expect(list.tagName).toBe("OL");
-    expect(scroller.className).not.toMatch(/\bjustify-end\b/);
-    expect(list.className).not.toMatch(/\bmin-h-full\b|\bjustify-end\b|\bmt-auto\b/);
+    const user = await waitFor(() => document.querySelector('[data-role="user"]') as HTMLElement);
+    const reply = await waitFor(() => document.querySelector('[data-role="assistant"]') as HTMLElement);
+
+    // the user's turn is the scroll anchor; the reply streams in under it
+    expect(user.getAttribute("data-scroll-anchor")).toBe("true");
+    expect(reply.getAttribute("data-scroll-anchor")).toBe("false");
+    // the scroller reserves blank room below the newest turn
+    expect(scroller.querySelector("[data-message-scroller-spacer]")).not.toBeNull();
     // and the first turn starts 24px under the strip, from the list's padding
+    const list = scroller.querySelector('[data-ai="thread-list"]') as HTMLElement;
     expect(list.className).toContain("py-6");
   });
 
