@@ -334,6 +334,19 @@ export function mergeResults(response: Pick<SearchResponse, "byProvider">, limit
     .map(({ bestRank: _bestRank, ...result }) => result);
 }
 
+/** one server-log line per call: what ran, how long, and where it sits in the trajectory tree */
+function logCall(meta: TelemCallMeta) {
+  const providers = meta.providers.map((p) => `${p.provider}${p.latencyMs != null ? `:${p.latencyMs}ms` : ""}`).join(",");
+  const what = meta.kind === "search" ? `"${(meta.query ?? "").slice(0, 60)}"` : `${meta.urls?.length ?? 0} url(s)`;
+  console.info(
+    `[telem] ${meta.kind} ${meta.caller}${meta.agentTitle ? `(${meta.agentTitle})` : ""} ${what} → ${meta.status}` +
+      ` ${meta.resultCount} in ${meta.latencyMs}ms [${providers}]` +
+      (meta.fallback ? ` FALLBACK=${meta.fallback} (${meta.error})` : "") +
+      ` session=${meta.sessionId ?? "-"} traj=${meta.trajectoryId ?? "-"}` +
+      (meta.parentTrajectoryId ? ` parent=${meta.parentTrajectoryId}` : ""),
+  );
+}
+
 /* ------------------------------------------------------------------ search */
 
 export type TelemSearchOptions = {
@@ -389,6 +402,7 @@ export async function telemSearch(query: string, options: TelemSearchOptions = {
   const settle = (meta: Partial<TelemCallMeta> & Pick<TelemCallMeta, "status" | "providers" | "resultCount">) => {
     const finishedAt = Date.now();
     const full: TelemCallMeta = { ...base, ...meta, finishedAt, latencyMs: finishedAt - startedAt };
+    logCall(full);
     emitTelemCall(full);
     return full;
   };
@@ -527,6 +541,7 @@ export async function telemFetch(urls: readonly string[], options: TelemFetchOpt
   const settle = (meta: Partial<TelemCallMeta> & Pick<TelemCallMeta, "status" | "providers" | "resultCount">) => {
     const finishedAt = Date.now();
     const full: TelemCallMeta = { ...base, ...meta, finishedAt, latencyMs: finishedAt - startedAt };
+    logCall(full);
     emitTelemCall(full);
     return full;
   };
