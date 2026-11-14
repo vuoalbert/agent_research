@@ -1,7 +1,13 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { SIDE_TAB_LABELS, SIDE_TAB_REACH, SideTabs } from "@/components/side-tabs";
+
+/* Instant motion: the tests pin what opens and closes, not the frames between. */
+vi.mock("@/lib/motion-tokens", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/motion-tokens")>()),
+  useReduced: () => true,
+}));
 
 /** every x coordinate an absolute-command path visits, in order */
 function xs(d: string) {
@@ -11,37 +17,40 @@ function xs(d: string) {
   });
 }
 
+const tab = (name: string) => screen.getByRole("button", { name });
+
 describe("SideTabs", () => {
-  it("renders the four named handles in order, inert", () => {
+  it("renders the four named tabs in order, as closed toggles", () => {
     const { container } = render(<SideTabs />);
     const stack = container.querySelector("[data-side-tabs]") as HTMLElement;
-    const tabs = [...stack.querySelectorAll("[data-side-tab]")];
+    const tabs = within(stack).getAllByRole("button");
 
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
+    expect(tabs.map((t) => t.textContent)).toEqual([
       "Knowledge base",
       "References",
       "World Labs",
       "Force graph",
     ]);
     expect(SIDE_TAB_LABELS).toHaveLength(4);
-    // still decoration: nothing to tab to, nothing to catch a click
-    expect(stack.getAttribute("aria-hidden")).toBe("true");
-    expect(stack.querySelector("a, button, input, [tabindex]")).toBeNull();
+    expect(tabs.every((t) => t.getAttribute("aria-expanded") === "false")).toBe(true);
+    expect(screen.queryByRole("region")).toBeNull();
+    // the gaps between tabs stay click-through to the chat
     expect(stack.className).toContain("pointer-events-none");
+    expect(tabs[0].className).toContain("pointer-events-auto");
   });
 
   it("is the reach plus one pixel of card border wide", () => {
     const { container } = render(<SideTabs />);
-    const tab = container.querySelector("[data-side-tab]") as SVGSVGElement;
+    const svg = container.querySelector("[data-side-tab] svg") as SVGSVGElement;
 
-    expect(tab.getAttribute("width")).toBe(String(SIDE_TAB_REACH + 1));
+    expect(svg.getAttribute("width")).toBe(String(SIDE_TAB_REACH + 1));
   });
 
   it("faces inward: based on the right-hand border, reaching left", () => {
     const { container } = render(<SideTabs />);
-    const tab = container.querySelector("[data-side-tab]") as SVGSVGElement;
-    const width = Number(tab.getAttribute("width"));
-    const outline = tab.querySelector("path.fill-none") as SVGPathElement;
+    const svg = container.querySelector("[data-side-tab] svg") as SVGSVGElement;
+    const width = Number(svg.getAttribute("width"));
+    const outline = svg.querySelector("path.fill-none") as SVGPathElement;
     const points = xs(outline.getAttribute("d") ?? "");
 
     // both flares end on the border's centre line, in the box's last column
@@ -49,5 +58,39 @@ describe("SideTabs", () => {
     expect(points[points.length - 1]).toBe(width - 0.5);
     // and the rounded end is all the way over in the first one
     expect(Math.min(...points)).toBe(0.5);
+  });
+
+  it.each(SIDE_TAB_LABELS)("opens and closes the %s panel from its tab", async (name) => {
+    render(<SideTabs />);
+
+    fireEvent.click(tab(name));
+
+    const panel = screen.getByRole("region", { name });
+    expect(tab(name).getAttribute("aria-expanded")).toBe("true");
+    expect(tab(name).getAttribute("aria-controls")).toBe(panel.id);
+    expect(within(panel).getByRole("heading", { name })).toBeTruthy();
+    // the other three are gone: only the open tab is left to press
+    expect(screen.getAllByRole("button").map((t) => t.textContent)).toEqual([name]);
+
+    fireEvent.click(tab(name));
+
+    expect(tab(name).getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
+    expect(screen.getAllByRole("button").map((t) => t.textContent)).toEqual([
+      ...SIDE_TAB_LABELS,
+    ]);
+  });
+
+  it("closes on Escape", async () => {
+    render(<SideTabs />);
+
+    fireEvent.click(tab("References"));
+    expect(screen.getByRole("region", { name: "References" })).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
+    expect(screen.getAllByRole("button")).toHaveLength(4);
+    expect(tab("References").getAttribute("aria-expanded")).toBe("false");
   });
 });

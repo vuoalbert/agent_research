@@ -20,8 +20,9 @@ import type { ReactNode } from "react";
  *   content   x 310..1432, y 40..892 — an inset card that draws all four of
  *             its own borders with an 8px radius; the gutters right of and
  *             below it are 8px of page bg. The side tabs hang inside the card,
- *             off its right border: x 1403..1432, reaching 28px in from the
- *             border's inner edge at 1431.
+ *             off its right border: x 1397..1432, reaching 34px in from the
+ *             border's inner edge at 1431. An open tab's panel slides out of
+ *             that border over the chat, x 1111..1431 at 1440 wide.
  *
  * Edge ownership — verified against the PNG by the region agents, and the
  * reason the capture shows exactly 1px at every seam, never 2 and never 0:
