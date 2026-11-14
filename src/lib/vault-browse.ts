@@ -114,3 +114,30 @@ export function linkifyWikilinks(markdown: string, titles: Readonly<Record<strin
   }
   return out + rewrite(markdown.slice(last));
 }
+
+/**
+ * Every entry that disagrees with a claim — the items of a `## Contradicted
+ * by` section (a Claim note) and `- contradicts [[…]]` items (a Source note) —
+ * wrapped in `<ins>`, the one inline tag the Markdown renderer keeps, so the
+ * panel can set them in the app's conflict red. Fenced code is left alone.
+ */
+export function markContradictions(markdown: string): string {
+  let fenced = false;
+  let section = "";
+  return markdown
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+      if (fenced) return line;
+      const heading = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+      if (heading) {
+        section = heading[1].toLowerCase();
+        return line;
+      }
+      const item = /^(\s*[-*+]\s+)(.+)$/.exec(line);
+      if (!item) return line;
+      if (section === "contradicted by" || /^contradicts\b/i.test(item[2])) return `${item[1]}<ins>${item[2]}</ins>`;
+      return line;
+    })
+    .join("\n");
+}

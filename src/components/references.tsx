@@ -8,11 +8,11 @@ import { Markdown } from "@/components/ai/markdown";
 import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { Button } from "@/components/ui/button";
 import { hostOf } from "@/components/knowledge-base";
-import { ScrollBlur } from "@/components/ui/scroll-blur";
 import { useAgentStore } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 import {
   linkifyWikilinks,
+  markContradictions,
   MISSING_HREF,
   pathFromHref,
   type VaultNoteView,
@@ -29,8 +29,8 @@ import {
  * button that walks the notes opened so far, then returns to the tree.
  *
  * Like the Knowledge base, the heading stays put and only the area below it
- * scrolls (scrollbar hidden, soft fades at the edges). The tree is fetched
- * when the panel opens and again when a chat turn finishes (a turn may have
+ * scrolls (scrollbar hidden, shadcn's `scroll-fade-y` mask at the edges).
+ * The tree is fetched when the panel opens and again when a chat turn finishes (a turn may have
  * written notes); nothing polls.
  */
 
@@ -225,11 +225,13 @@ function NoteBody({
               "[&_h2]:mt-4 [&_h2]:mb-1 [&_h2]:text-[14px] [&_h2]:leading-[22px]",
               "[&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:text-[14px] [&_h3]:leading-[22px]",
               "[&_p]:my-2 [&_ol]:my-2 [&_ol]:pl-5 [&_ul]:my-2 [&_ul]:pl-5 [&_blockquote]:pl-3",
+              // an entry that contradicts the claim: the app's solid conflict red
+              "[&_ins]:text-[#DC2626] [&_ins]:no-underline [&_ins_a]:text-[#DC2626] [&_ins_a]:decoration-[#DC2626]/40 [&_ins_a:hover]:decoration-[#DC2626] [&_li:has(>ins)]:marker:text-[#DC2626]",
               // a [[link]] to a note the vault does not have: muted, inert
               "[&_a[href='#vault-missing']]:pointer-events-none [&_a[href='#vault-missing']]:cursor-default [&_a[href='#vault-missing']]:text-plane-faint [&_a[href='#vault-missing']]:no-underline",
             )}
           >
-            {linkifyWikilinks(body, titles)}
+            {linkifyWikilinks(markContradictions(body), titles)}
           </Markdown>
         </div>
       )}
@@ -337,13 +339,10 @@ export function References({ titleId, open = true }: { titleId: string; open?: b
       </div>
 
       {current ? (
-        <ScrollBlur
+        <div
           key={current}
-          fadeSize={28}
-          className="-mx-4 mt-2 flex-1"
-          viewportClassName={cn("overflow-y-auto px-4", NO_SCROLLBAR)}
-          viewportLabel="Note"
-          viewportProps={{ "data-ref": "note-scroll" }}
+          data-ref="note-scroll"
+          className={cn("scroll-fade-y scroll-fade-7 -mx-4 mt-2 min-h-0 flex-1 overflow-y-auto px-4", NO_SCROLLBAR)}
         >
           {note.status === "ready" ? (
             <NoteBody note={note.data} titles={titles} onOpen={openNote} />
@@ -352,7 +351,7 @@ export function References({ titleId, open = true }: { titleId: string; open?: b
               {note.status === "missing" ? "This note is no longer in the vault." : "Couldn't open this note."}
             </p>
           ) : null}
-        </ScrollBlur>
+        </div>
       ) : null}
 
       {empty || tree.status === "error" ? (
@@ -364,15 +363,16 @@ export function References({ titleId, open = true }: { titleId: string; open?: b
         </div>
       ) : tree.status === "ready" ? (
         /* kept mounted under an open note, so back returns to the same scroll and folds */
-        <ScrollBlur
-          fadeSize={28}
-          className={cn("-mx-4 mt-2 flex-1", current && "hidden")}
-          viewportClassName={cn("overflow-y-auto px-3", NO_SCROLLBAR)}
-          viewportLabel="Vault"
-          viewportProps={{ "data-ref": "scroll" }}
+        <div
+          data-ref="scroll"
+          className={cn(
+            "scroll-fade-y scroll-fade-7 -mx-4 mt-2 min-h-0 flex-1 overflow-y-auto px-3",
+            NO_SCROLLBAR,
+            current && "hidden",
+          )}
         >
           <TreeNodes nodes={tree.data.children} depth={0} collapsed={collapsed} onToggle={toggle} onOpen={openFromTree} />
-        </ScrollBlur>
+        </div>
       ) : null}
     </div>
   );

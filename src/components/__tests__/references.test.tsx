@@ -43,7 +43,7 @@ const NOTES: Record<string, VaultNoteView> = {
     path: "Claims/Sold 425M.md",
     title: "Sold 425M",
     frontmatter: { type: "claim", updated: "2026-11-14" },
-    body: "# Minecraft has sold more than 425 million copies.\n\n## Mentioned by\n- [[Guinness]] — \"over 350 million\"",
+    body: "# Minecraft has sold more than 425 million copies.\n\n## Supported by\n- [[How many copies]] — \"425M+\"\n\n## Contradicted by\n- [[Old figure]] — \"300 million\"\n\n## Mentioned by\n- [[Guinness]] — \"over 350 million\"",
   },
   "Sources/Guinness.md": {
     path: "Sources/Guinness.md",
@@ -122,6 +122,12 @@ describe("References panel", () => {
     fireEvent.click(within(research).getByText("Sold 425M"));
     const claim = await find(panel, '[data-ref-path="Claims/Sold 425M.md"]');
     expect(within(claim).getByRole("heading", { name: "Minecraft has sold more than 425 million copies." })).toBeTruthy();
+    expect(within(claim).getByRole("heading", { name: "Supported by" })).toBeTruthy();
+    // the contradicting entry is set apart (red); the others are not
+    await within(claim).findByText("Old figure");
+    expect(within(claim).getByText("Old figure").closest("ins")!.textContent).toBe('Old figure — "300 million"');
+    expect(within(claim).getByText("Guinness").closest("ins")).toBeNull();
+    expect(within(claim).getByText("How many copies").closest("ins")).toBeNull();
 
     fireEvent.click(await within(claim).findByText("Guinness"));
     const source = await find(panel, '[data-ref-path="Sources/Guinness.md"]');

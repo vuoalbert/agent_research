@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as getNote } from "@/app/api/vault/note/route";
 import { GET as getResolve } from "@/app/api/vault/resolve/route";
 import { GET as getTree } from "@/app/api/vault/tree/route";
-import { linkifyWikilinks, MISSING_HREF, noteHref, pathFromHref, resolveWikilink } from "@/lib/vault-browse";
+import { linkifyWikilinks, markContradictions, MISSING_HREF, noteHref, pathFromHref, resolveWikilink } from "@/lib/vault-browse";
 
 import { readVaultNote, vaultTree } from "./browse";
 import { VaultPathError } from "./files";
@@ -146,6 +146,19 @@ describe("wikilinks", () => {
     );
     expect(pathFromHref(noteHref("Claims/Minecraft sold 425M.md"))).toBe("Claims/Minecraft sold 425M.md");
     expect(pathFromHref("https://example.com")).toBeNull();
+  });
+});
+
+describe("markContradictions", () => {
+  it("wraps a Contradicted by section's entries and contradicts items, nothing else", () => {
+    const claim = "## Supported by\n- [[A]] — \"yes\"\n\n## Contradicted by\n- [[B]] — \"no\"\n- [[C]]\n\n## Mentioned by\n- [[D]]";
+    expect(markContradictions(claim)).toBe(
+      "## Supported by\n- [[A]] — \"yes\"\n\n## Contradicted by\n- <ins>[[B]] — \"no\"</ins>\n- <ins>[[C]]</ins>\n\n## Mentioned by\n- [[D]]",
+    );
+    const source = "## Claims\n- supports [[X]] — \"a\"\n- contradicts [[Y]] — \"b\"\n```\n- contradicts [[Z]]\n```";
+    expect(markContradictions(source)).toBe(
+      "## Claims\n- supports [[X]] — \"a\"\n- <ins>contradicts [[Y]] — \"b\"</ins>\n```\n- contradicts [[Z]]\n```",
+    );
   });
 });
 
