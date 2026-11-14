@@ -62,9 +62,9 @@ import { cn } from "@/lib/utils";
 
 type GraphNode = ResearchNode & { x?: number; y?: number; z?: number };
 
-const NODE_VAL: Record<ResearchNodeKind, number> = { chat: 10, search: 3.5, page: 1.8 };
+const NODE_VAL: Record<ResearchNodeKind, number> = { chat: 10, subagent: 5.5, search: 3.5, page: 1.8 };
 /** the app's ink tones: conversations darkest, pages lightest */
-const NODE_COLOR: Record<ResearchNodeKind, string> = { chat: "#1F2124", search: "#6B6F75", page: "#A3A6AB" };
+const NODE_COLOR: Record<ResearchNodeKind, string> = { chat: "#1F2124", subagent: "#45484D", search: "#6B6F75", page: "#A3A6AB" };
 export type LinkStyle = {
   /** any CSS colour; an alpha channel fades the link */
   color: string;
@@ -99,11 +99,11 @@ const linkStyle = (link: object) => LINK_STYLE[(link as { kind: ResearchLinkKind
 const linkWidthOf = (link: object) => (link as ResearchLink).width ?? linkStyle(link).width;
 /** the least distance a click parks the camera from a chat or a search; it
  *  backs further out if a page would still be within PAGE_FAR */
-const FLY_DISTANCE: Record<Exclude<ResearchNodeKind, "page">, number> = { chat: 320, search: 260 };
+const FLY_DISTANCE: Record<Exclude<ResearchNodeKind, "page">, number> = { chat: 320, subagent: 290, search: 260 };
 const FLY_MS = 800;
 /** a page nearer the camera's plane than this (world units) is not drawn */
 const MIN_DEPTH = 12;
-const KIND_LABEL: Record<ResearchNodeKind, string> = { chat: "Chat", search: "Search", page: "Page" };
+const KIND_LABEL: Record<ResearchNodeKind, string> = { chat: "Chat", subagent: "Subagent", search: "Search", page: "Page" };
 export const EMPTY_TEXT = "Ask Claude to research something — sources show up here as a graph";
 
 const escapeHtml = (text: string) =>

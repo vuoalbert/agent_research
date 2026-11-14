@@ -8,14 +8,17 @@ import { crossrefLinks } from "@/lib/crossref-links";
  * a rebuild after a new tool event keeps every node the graph already laid out.
  *
  * Nodes
- *   chat    a conversation (its title)
- *   search  one search call (its query)
+ *   chat     a conversation (its title)
+ *   subagent one research subagent a deploy_subagents call sent out (its
+ *            title); its own searches and reads hang off it, not the chat
+ *   search   one search call (its query)
  *   page    one source page, ONE node per `sourceKey` across every chat, so two
  *           chats that turned up the same page meet at it
  *
  * Links
- *   asked     chat → the first search of each assistant turn
- *   built-on  search → the next search in the same turn
+ *   asked     chat → the first search of each assistant turn; chat → each
+ *             subagent; subagent → its first search
+ *   built-on  search → the next search in the same turn (or by the same subagent)
  *   found     search → each page it found
  *   read      the search a read followed (or the chat, if it came first) →
  *             each page the read opened
@@ -30,13 +33,13 @@ import { crossrefLinks } from "@/lib/crossref-links";
  * and conflicts is drawn as one `conflicts` link carrying every claim.
  */
 
-export type ResearchNodeKind = "chat" | "search" | "page";
+export type ResearchNodeKind = "chat" | "subagent" | "search" | "page";
 export type ResearchLinkKind = "asked" | "built-on" | "found" | "read" | "cross-ref" | "agrees" | "conflicts";
 
 export type ResearchNode = {
   id: string;
   kind: ResearchNodeKind;
-  /** the hover label: chat title, search query, page title */
+  /** the hover label: chat title, subagent title, search query, page title */
   label: string;
   /** pages only */
   url?: string;
@@ -64,6 +67,8 @@ export const chatNodeId = (chatId: string) => `chat:${chatId}`;
 export const pageNodeId = (url: string) => `page:${sourceKey(url)}`;
 const searchNodeId = (chatId: string, messageId: string, callId: string) =>
   `search:${chatId}:${messageId}:${callId}`;
+export const subagentNodeId = (chatId: string, messageId: string, agentId: string) =>
+  `subagent:${chatId}:${messageId}:${agentId}`;
 
 function hostOf(url: string): string {
   try {
@@ -128,17 +133,45 @@ export function buildResearchGraph(
 
     for (const message of messages[chat.id] ?? []) {
       if (message?.role !== "assistant" || !Array.isArray(message.tools)) continue;
+      const calls = (message.tools as ToolCall[]).filter((call) => call && typeof call === "object");
       /** the turn's latest search: the next search builds on it, a read follows it */
       let previous: string | null = null;
+      /** the same, per subagent (by agentId) — a subagent's trail is its own */
+      const agentPrevious = new Map<string, string>();
+      /** every subagent the turn's groups name, by agentId */
+      const titles = new Map<string, string>();
+      for (const call of calls) {
+        if (call.action !== "subagents" || !Array.isArray(call.subagents)) continue;
+        for (const sub of call.subagents) {
+          if (sub && typeof sub.id === "string") titles.set(sub.id, String(sub.title ?? "").trim() || "Subagent");
+        }
+      }
+      const ensureSubagent = (agentId: string) => {
+        const id = subagentNodeId(chat.id, message.id, agentId);
+        if (!nodes.has(id)) {
+          nodes.set(id, { id, kind: "subagent", label: titles.get(agentId) ?? "Subagent" });
+          link("asked", ensureChat(), id);
+        }
+        return id;
+      };
 
-      for (const call of message.tools as ToolCall[]) {
-        if (!call || typeof call !== "object") continue;
+      for (const call of calls) {
         const sources = Array.isArray(call.sources) ? call.sources : [];
+        /* a group is its subagents, not a search of its own */
+        if (call.action === "subagents") {
+          for (const sub of Array.isArray(call.subagents) ? call.subagents : []) {
+            if (sub && typeof sub.id === "string") ensureSubagent(sub.id);
+          }
+          continue;
+        }
+        const agentId = typeof call.agentId === "string" ? call.agentId : null;
+        const last = agentId ? (agentPrevious.get(agentId) ?? null) : previous;
+        const root = () => (agentId ? ensureSubagent(agentId) : ensureChat());
 
         if (call.action === "read") {
           const read = sources.map(page).filter((id): id is string => id !== null);
           if (read.length === 0) continue;
-          const from = previous ?? ensureChat();
+          const from = last ?? root();
           for (const id of read) link("read", from, id);
           for (let i = 0; i < read.length; i++)
             for (let j = i + 1; j < read.length; j++) link("cross-ref", read[i], read[j]);
@@ -148,10 +181,11 @@ export function buildResearchGraph(
         /* a search that failed and found nothing is noise */
         if (call.status === "error" && sources.length === 0) continue;
         const id = searchNodeId(chat.id, message.id, call.id);
-        const from = previous ?? ensureChat();
+        const from = last ?? root();
         nodes.set(id, { id, kind: "search", label: String(call.query ?? "").trim() || "Search" });
-        link(previous ? "built-on" : "asked", from, id);
-        previous = id;
+        link(last ? "built-on" : "asked", from, id);
+        if (agentId) agentPrevious.set(agentId, id);
+        else previous = id;
         for (const source of sources) {
           const found = page(source);
           if (found) link("found", id, found);

@@ -4,8 +4,10 @@ import { useCallback, useSyncExternalStore } from "react";
 
 import { mergeCrossrefs, type Crossref } from "./crossref";
 import { sourceKey } from "./source-key";
+import { parseSubagents, type Subagent } from "./subagents";
 
 export { sourceKey };
+export type { Subagent, SubagentShape, SubagentStatus } from "./subagents";
 export type { Claim, ClaimSource, Crossref, Relation, Stance } from "./crossref";
 
 /**
@@ -60,9 +62,9 @@ export type ToolCall = {
   id: string;
   name: string;
   /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
-   *  "vault" for a vault search/read/write, "visualize" for a figure job; absent for a search,
-   *  and on chats saved before reads */
-  action?: "read" | "crossref" | "vault" | "visualize";
+   *  "vault" for a vault search/read/write, "visualize" for a figure job, "subagents" for a
+   *  deploy_subagents group; absent for a search, and on chats saved before reads */
+  action?: "read" | "crossref" | "vault" | "visualize" | "subagents";
   /** a vault call's kind, for its row's verb */
   op?: "search" | "read" | "write";
   /** a Visualize call's background job, which the row follows after the call itself is done */
@@ -72,7 +74,15 @@ export type ToolCall = {
   sources?: Source[];
   /** a cross_reference's claims and source↔source relations */
   crossref?: Crossref;
+  /** a "subagents" group: each subagent's state, as the route last reported it */
+  subagents?: Subagent[];
+  /** a call a subagent made: the group it belongs to (drawn inside it, never on its own) … */
+  parentId?: string;
+  /** … and the subagent that made it */
+  agentId?: string;
 };
+
+const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = ["read", "crossref", "vault", "visualize", "subagents"];
 
 export type Message = {
   id: string;
@@ -469,27 +479,47 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
 
 /** the route's `tool` frame: a call starting, or one it started ending */
 type ToolEvent =
-  | { id: string; name: string; action?: ToolCall["action"]; op?: ToolCall["op"]; jobId?: string; query: string; status: "running" }
-  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref }
+  | {
+      id: string;
+      name: string;
+      action?: ToolCall["action"];
+      op?: ToolCall["op"];
+      jobId?: string;
+      query: string;
+      status: "running";
+      subagents?: unknown;
+      parentId?: string;
+      agentId?: string;
+    }
+  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref; subagents?: unknown }
   | { id: string; status: "error" };
 
-/** fold one `tool` frame into a turn's calls: a start appends, an end updates in place */
+/**
+ * Fold one `tool` frame into a turn's calls: a start appends, an end updates in
+ * place. A "subagents" group is re-sent `running` as its subagents move on;
+ * those frames update its `subagents` in place.
+ */
 export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: ToolEvent): ToolCall[] {
   const list = tools ?? [];
+  const subagents = "subagents" in event ? parseSubagents(event.subagents) : undefined;
   if (event.status === "running") {
-    if (list.some((call) => call.id === event.id)) return [...list];
+    if (list.some((call) => call.id === event.id)) {
+      if (!subagents) return [...list];
+      return list.map((call) => (call.id === event.id ? { ...call, subagents } : call));
+    }
     return [
       ...list,
       {
         id: event.id,
         name: event.name,
-        ...(event.action === "read" || event.action === "crossref" || event.action === "vault" || event.action === "visualize"
-          ? { action: event.action }
-          : {}),
+        ...(event.action && ACTIONS.includes(event.action) ? { action: event.action } : {}),
         ...(event.op === "search" || event.op === "read" || event.op === "write" ? { op: event.op } : {}),
         ...(typeof event.jobId === "string" ? { jobId: event.jobId } : {}),
         query: event.query,
         status: "running",
+        ...(subagents ? { subagents } : {}),
+        ...(typeof event.parentId === "string" ? { parentId: event.parentId } : {}),
+        ...(typeof event.agentId === "string" ? { agentId: event.agentId } : {}),
       },
     ];
   }
@@ -502,9 +532,19 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
             status: "done",
             sources: event.sources ?? [],
             ...(event.crossref ? { crossref: event.crossref } : {}),
+            ...(subagents ? { subagents } : {}),
           }
         : { ...call, status: "error" },
   );
+}
+
+/** a call cut off by Stop or a failure, settled: it, and any subagent still running in it, failed */
+export function settleCall(call: ToolCall): ToolCall {
+  const subagents = call.subagents?.some((sub) => sub.status === "running")
+    ? call.subagents.map((sub) => (sub.status === "running" ? { ...sub, status: "error" as const } : sub))
+    : call.subagents;
+  if (call.status !== "running" && subagents === call.subagents) return call;
+  return { ...call, status: call.status === "running" ? "error" : call.status, ...(subagents ? { subagents } : {}) };
 }
 
 /** rewrite a turn's tool calls in place */
@@ -631,10 +671,8 @@ async function streamReply(chatId: string, replyId: string) {
     // a call cut off by Stop or a failure never reports its end: settle it, so
     // a reload does not pulse it forever
     const reply = getSnapshot().messages[chatId]?.find((turn) => turn.id === replyId);
-    if (reply?.tools?.some((call) => call.status === "running")) {
-      updateTools(chatId, replyId, (tools) =>
-        (tools ?? []).map((call) => (call.status === "running" ? { ...call, status: "error" } : call)),
-      );
+    if (reply?.tools?.some((call) => settleCall(call) !== call)) {
+      updateTools(chatId, replyId, (tools) => (tools ?? []).map(settleCall));
     }
     inFlight.delete(chatId);
     setStreaming(chatId, false);

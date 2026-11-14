@@ -88,7 +88,7 @@ describe("POST /api/chat", () => {
     await readAll(response);
   });
 
-  it("asks Opus 5.5 at high effort, with only Tavily search, read, cross_reference and the vault, and no repo settings", async () => {
+  it("asks Opus 5.5 at high effort, with only Tavily search, read, cross_reference, the vault and subagents, and no repo settings", async () => {
     query.mockReturnValue(stream(delta("x")));
     await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
 
@@ -110,6 +110,7 @@ describe("POST /api/chat", () => {
       "vault_search",
       "vault_read",
       "vault_write",
+      "deploy_subagents",
     ]);
     expect(options.allowedTools).toEqual([
       "mcp__research__tavily_search",
@@ -118,6 +119,7 @@ describe("POST /api/chat", () => {
       "mcp__research__vault_search",
       "mcp__research__vault_read",
       "mcp__research__vault_write",
+      "mcp__research__deploy_subagents",
       "mcp__visualize__visualize",
     ]);
     expect(options.permissionMode).toBe("dontAsk");

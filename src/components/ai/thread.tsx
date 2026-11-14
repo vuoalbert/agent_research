@@ -50,6 +50,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { DURATION, bodyVariants, popVariants, timing, useReduced } from "@/lib/motion-tokens";
 
 import { Markdown } from "@/components/ai/markdown";
+import { SubagentsBlock } from "@/components/ai/subagents-block";
 import { NO_SCROLLBAR, THREAD_COLUMN, THREAD_GLIDE } from "@/components/ai/tokens";
 import {
   MessageScroller,
@@ -202,10 +203,14 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
  * One tool call, the way Claude Code prints its tool lines: a wrench, the
  * tool's name, then what it was asked — the search query, or "Reading" and the
  * hosts for a page read — cut to one line. It pulses while the call runs.
+ * A deploy_subagents group is a block of its own, holding its subagents' calls.
  */
-function ToolRow({ call }: { call: ToolCall }) {
+function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCall[] }) {
   // a figure job: a box, and it follows the job rather than the call
   if (call.action === "visualize") return <VisualizeToolRow call={call} />;
+  if (call.action === "subagents") {
+    return <SubagentsBlock call={call} calls={calls} renderCall={(own) => <ToolRow call={own} />} />;
+  }
   const vault = call.action === "vault" || call.name === "Vault";
   const detail = vault
     ? `${call.op === "read" ? "Reading" : call.op === "write" ? "Saved" : "Searching"} ${call.query}`
@@ -327,12 +332,15 @@ export function AiThread({
                     </p>
                   ) : (
                     <>
-                      {/* the tool calls this reply made, in order, above its text */}
+                      {/* the tool calls this reply made, in order, above its text; a
+                          subagent's own calls live inside its group, not here */}
                       {message.tools && message.tools.length > 0 && (
                         <div data-ai="tools" className="flex flex-col gap-1 pt-2">
-                          {message.tools.map((call) => (
-                            <ToolRow key={call.id} call={call} />
-                          ))}
+                          {message.tools
+                            .filter((call) => !call.parentId)
+                            .map((call) => (
+                              <ToolRow key={call.id} call={call} calls={message.tools} />
+                            ))}
                         </div>
                       )}
                       {message.content === "" ? (
