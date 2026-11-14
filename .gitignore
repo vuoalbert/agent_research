@@ -51,3 +51,5 @@ out/
 /.worlds/
 # local test splats for the World Labs viewer (never committed)
 /public/dev-worlds/
+# Telem usage telemetry (per-chat JSON lines)
+/.telem/

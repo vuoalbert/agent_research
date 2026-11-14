@@ -84,7 +84,23 @@ export type ToolCall = {
   parentId?: string;
   /** … and the subagent that made it */
   agentId?: string;
+  /** a Telem search or read: who answered and how long it took, for the row's hover title only */
+  telem?: TelemCallInfo;
 };
+
+/** what a Telem call's `done`/`error` frame says about it */
+export type TelemCallInfo = { providers: string[]; latencyMs?: number };
+
+function parseTelemInfo(value: unknown): TelemCallInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { providers, latencyMs } = value as { providers?: unknown; latencyMs?: unknown };
+  if (!Array.isArray(providers)) return undefined;
+  const names = providers.filter((p): p is string => typeof p === "string" && p.length > 0).slice(0, 12);
+  return {
+    providers: names,
+    ...(typeof latencyMs === "number" && Number.isFinite(latencyMs) && latencyMs >= 0 ? { latencyMs } : {}),
+  };
+}
 
 const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = [
   "read",
@@ -504,8 +520,8 @@ type ToolEvent =
       parentId?: string;
       agentId?: string;
     }
-  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref; subagents?: unknown }
-  | { id: string; status: "error" };
+  | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref; subagents?: unknown; telem?: unknown }
+  | { id: string; status: "error"; telem?: unknown };
 
 /**
  * Fold one `tool` frame into a turn's calls: a start appends, an end updates in
@@ -537,6 +553,7 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
       },
     ];
   }
+  const telem = parseTelemInfo(event.telem);
   return list.map((call) =>
     call.id !== event.id
       ? call
@@ -547,8 +564,9 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
             sources: event.sources ?? [],
             ...(event.crossref ? { crossref: event.crossref } : {}),
             ...(subagents ? { subagents } : {}),
+            ...(telem ? { telem } : {}),
           }
-        : { ...call, status: "error" },
+        : { ...call, status: "error", ...(telem ? { telem } : {}) },
   );
 }
 
