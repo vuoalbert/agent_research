@@ -59,6 +59,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
 } from "@/components/ui/message-scroller";
+import { VisualizeToolRow } from "@/components/visualize/visualize-tool-row";
 import type { Message, ToolCall } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
@@ -203,6 +204,8 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
  * hosts for a page read — cut to one line. It pulses while the call runs.
  */
 function ToolRow({ call }: { call: ToolCall }) {
+  // a figure job: a box, and it follows the job rather than the call
+  if (call.action === "visualize") return <VisualizeToolRow call={call} />;
   const vault = call.action === "vault" || call.name === "Vault";
   const detail = vault
     ? `${call.op === "read" ? "Reading" : call.op === "write" ? "Saved" : "Searching"} ${call.query}`

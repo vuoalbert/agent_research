@@ -60,10 +60,13 @@ export type ToolCall = {
   id: string;
   name: string;
   /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
-   *  "vault" for a vault search/read/write; absent for a search, and on chats saved before reads */
-  action?: "read" | "crossref" | "vault";
+   *  "vault" for a vault search/read/write, "visualize" for a figure job; absent for a search,
+   *  and on chats saved before reads */
+  action?: "read" | "crossref" | "vault" | "visualize";
   /** a vault call's kind, for its row's verb */
   op?: "search" | "read" | "write";
+  /** a Visualize call's background job, which the row follows after the call itself is done */
+  jobId?: string;
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
@@ -466,7 +469,7 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
 
 /** the route's `tool` frame: a call starting, or one it started ending */
 type ToolEvent =
-  | { id: string; name: string; action?: ToolCall["action"]; op?: ToolCall["op"]; query: string; status: "running" }
+  | { id: string; name: string; action?: ToolCall["action"]; op?: ToolCall["op"]; jobId?: string; query: string; status: "running" }
   | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref }
   | { id: string; status: "error" };
 
@@ -480,8 +483,11 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
       {
         id: event.id,
         name: event.name,
-        ...(event.action === "read" || event.action === "crossref" || event.action === "vault" ? { action: event.action } : {}),
+        ...(event.action === "read" || event.action === "crossref" || event.action === "vault" || event.action === "visualize"
+          ? { action: event.action }
+          : {}),
         ...(event.op === "search" || event.op === "read" || event.op === "write" ? { op: event.op } : {}),
+        ...(typeof event.jobId === "string" ? { jobId: event.jobId } : {}),
         query: event.query,
         status: "running",
       },
