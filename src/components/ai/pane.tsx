@@ -78,6 +78,7 @@ import { AiDockedFootnote } from "@/components/ai/docked-bar";
 import { AiHeader } from "@/components/ai/ai-header";
 import { AiHomeCards } from "@/components/ai/home-cards";
 import { AiThread } from "@/components/ai/thread";
+import { WorkingGlow } from "@/components/ai/working-glow";
 import { DOCK_SWAP, NO_SCROLLBAR, PANE_TONES } from "@/components/ai/tokens";
 import { SIDE_PANEL_INSET } from "@/components/side-tabs";
 import { useAgentStore } from "@/lib/agent-store";
@@ -178,7 +179,7 @@ export function AiPane() {
     <main
       data-region="ai-pane"
       style={PANE_TONES}
-      className="flex h-full flex-col overflow-hidden rounded-r-[8px] border border-plane-border bg-plane-pane"
+      className="relative flex h-full flex-col overflow-hidden rounded-r-[8px] border border-plane-border bg-plane-pane"
     >
       {/* The strip is empty on the home screen and carries the conversation's
           title once there is one. Same 44px box either way, so nothing below it
@@ -278,6 +279,9 @@ export function AiPane() {
           </LayoutGroup>
         ) : null}
       </div>
+
+      {/* the card's edge lights up while a reply is arriving */}
+      <WorkingGlow working={isStreaming} />
     </main>
   );
 }

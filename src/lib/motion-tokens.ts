@@ -165,3 +165,17 @@ export const LAYOUT_ID = {
   railPlate: "rail-active-plate",
   navPlate: "sidebar-active-plate",
 } as const;
+
+/**
+ * The card's "Claude is working" glow, in seconds. The sweep is two breaths
+ * long so the two loops line up instead of beating against each other; the
+ * fade is the only part a reduced-motion reader still sees, collapsed to 0.
+ */
+export const WORKING = {
+  /** the glow arriving and leaving when a reply starts and ends */
+  fade: 0.3,
+  /** one lap of the light around the card's edge */
+  sweep: 4.8,
+  /** one in-and-out of the inner glow */
+  breath: 2.4,
+} as const;
