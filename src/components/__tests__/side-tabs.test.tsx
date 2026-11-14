@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { SIDE_TAB_REACH, SideTabs } from "@/components/side-tabs";
+import { SIDE_TAB_LABELS, SIDE_TAB_REACH, SideTabs } from "@/components/side-tabs";
 
 /** every x coordinate an absolute-command path visits, in order */
 function xs(d: string) {
@@ -12,14 +12,20 @@ function xs(d: string) {
 }
 
 describe("SideTabs", () => {
-  it("renders four blank handles, hidden from assistive tech", () => {
+  it("renders the four named handles in order, inert", () => {
     const { container } = render(<SideTabs />);
     const stack = container.querySelector("[data-side-tabs]") as HTMLElement;
+    const tabs = [...stack.querySelectorAll("[data-side-tab]")];
 
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Knowledge base",
+      "References",
+      "World Labs",
+      "Force graph",
+    ]);
+    expect(SIDE_TAB_LABELS).toHaveLength(4);
+    // still decoration: nothing to tab to, nothing to catch a click
     expect(stack.getAttribute("aria-hidden")).toBe("true");
-    expect(stack.querySelectorAll("[data-side-tab]")).toHaveLength(4);
-    // blank and inert: no words, nothing to tab to, nothing to catch a click
-    expect(stack.textContent).toBe("");
     expect(stack.querySelector("a, button, input, [tabindex]")).toBeNull();
     expect(stack.className).toContain("pointer-events-none");
   });

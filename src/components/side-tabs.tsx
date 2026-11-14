@@ -1,10 +1,11 @@
 import { cn } from "@/lib/utils";
 
 /**
- * SideTabs — four blank handles hanging inward from the chat card's right
+ * SideTabs — four labelled handles hanging inward from the chat card's right
  * edge, each one a browser tab turned on its side: the base, with its two
  * concave flares, sits on the card's right border and the rounded end reaches
- * left into the chat. Decoration only for now: no labels, no behaviour.
+ * left into the chat. Each carries its name written down the tab (top to
+ * bottom). Decoration only for now: no behaviour behind the labels yet.
  *
  * One tab, in its own SVG box (x → toward the card's right edge, y ↓ down it):
  *
@@ -37,8 +38,13 @@ const LENGTH = 104;
 const END = 10;
 /** radius of the two concave flares where the tab meets the card border */
 const FLARE = 8;
-/** how many handles */
-const COUNT = 4;
+/** the handles, top to bottom */
+export const SIDE_TAB_LABELS = [
+  "Knowledge base",
+  "References",
+  "World Labs",
+  "Force graph",
+] as const;
 
 /** the box: the reach, plus the card's 1px border column on the right */
 const W = SIDE_TAB_REACH + 1;
@@ -49,6 +55,8 @@ const b = W - 0.5; // centre of the card's border column
 const tip = 0.5; // centre of the end's stroke column
 const top = FLARE + 0.5; // centre of the top side's stroke row
 const bottom = FLARE + LENGTH - 0.5; // centre of the bottom side's stroke row
+/** the label's centre line: midway between the rounded end and the border */
+const LABEL_X = (tip + (W - 1)) / 2;
 
 /** the visible edge: flare, side, round end, side, flare — open at the base */
 const OUTLINE = [
@@ -87,9 +95,9 @@ export function SideTabs({ className }: { className?: string }) {
       )}
       style={{ width: W }}
     >
-      {Array.from({ length: COUNT }, (_, i) => (
+      {SIDE_TAB_LABELS.map((label) => (
         <svg
-          key={i}
+          key={label}
           data-side-tab=""
           width={W}
           height={H}
@@ -102,6 +110,17 @@ export function SideTabs({ className }: { className?: string }) {
             className={cn("fill-none", OUTLINE_GREY)}
             strokeWidth={1}
           />
+          {/* the name, written down the tab and centred in its body */}
+          <text
+            x={LABEL_X}
+            y={H / 2}
+            transform={`rotate(90 ${LABEL_X} ${H / 2})`}
+            textAnchor="middle"
+            dominantBaseline="central"
+            className="fill-plane-ink-2 text-[12px]"
+          >
+            {label}
+          </text>
         </svg>
       ))}
     </div>
