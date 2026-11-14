@@ -5,9 +5,12 @@ import { query as sdkQuery, type Options } from "@anthropic-ai/claude-agent-sdk"
 import type { JobRecord } from "@/lib/visualize";
 
 import { BROWSER_SERVER, createBrowserServer, realChromePath, type RunCheck } from "./browser-tool";
+import { createInbox, type Inbox } from "./inbox";
+import { MESSAGING_RULES } from "./messages";
 import { realDir, secretPaths, type JobPaths, type StudioPaths } from "./paths";
 import { BROWSER_TOOL_ID, createGuardHooks, guardContext } from "./policy";
 import { describeMessage } from "./progress";
+import { VISUALIZE_VAULT_SERVER, VISUALIZE_VAULT_TOOL_IDS, createVaultServer } from "./vault-server";
 
 /**
  * The background agent behind one Visualize job: Claude Opus 5.5 at high
@@ -28,7 +31,12 @@ import { describeMessage } from "./progress";
  *     hatch (`allowUnsandboxedCommands: false`), and the job fails instead of
  *     running unsandboxed if the sandbox cannot start;
  *   - file-tool writes outside the working directory refused by Claude Code
- *     too (`blockWritesOutsideWorkingDirectories`).
+ *     too (`blockWritesOutsideWorkingDirectories`);
+ *   - the research vault read-only (vault_search, vault_read), in-process.
+ *
+ * It runs in streaming-input mode (inbox.ts): the chat's messages reach it
+ * mid-build, and its session is kept (`persistSession`) so a message after
+ * the run ended can `resume` it with these same options.
  */
 
 export const MODEL = "claude-opus-5-5";
@@ -41,6 +49,14 @@ export type AgentRunInput = {
   paths: JobPaths;
   signal: AbortSignal;
   log: (line: string) => void;
+  /** the run's input; the runner keeps it to push the chat's messages in mid-run */
+  inbox?: Inbox;
+  /** resume this session (a finished build) instead of starting one */
+  resume?: string;
+  /** the first turn; the build prompt (jobPrompt) when absent */
+  prompt?: string;
+  /** hears the session id as soon as the session has started */
+  onSession?: (sessionId: string) => void;
 };
 
 export type AgentRunResult =
@@ -49,6 +65,13 @@ export type AgentRunResult =
   | { outcome: "aborted" };
 
 export type RunAgent = (input: AgentRunInput) => Promise<AgentRunResult>;
+
+/**
+ * After a result that left a pushed message unconsumed (and nothing queued),
+ * how long to wait for the turn that takes it before ending the run anyway;
+ * the runner then resumes the session with that message.
+ */
+export const SETTLE_GRACE_MS = 30_000;
 
 /** env vars that look like credentials stay out of the agent's process (and so its shell) */
 const SECRET_VAR = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
@@ -124,12 +147,12 @@ export function agentOptions(
     model: MODEL,
     effort: EFFORT,
     thinking: { type: "adaptive" },
-    systemPrompt: { type: "preset", preset: "claude_code", append: systemRules(paths, studio) },
+    systemPrompt: { type: "preset", preset: "claude_code", append: `${systemRules(paths, studio)}\n\n${MESSAGING_RULES}` },
     settingSources: [],
     plugins: [{ type: "local", path: studio.plugin, skipMcpDiscovery: true }],
     skills: ["studio:anatomy"],
     tools: ["Skill", "Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-    allowedTools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash", BROWSER_TOOL_ID],
+    allowedTools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash", BROWSER_TOOL_ID, ...VISUALIZE_VAULT_TOOL_IDS],
     disallowedTools: ["WebFetch", "WebSearch", "Agent", "Task", "NotebookEdit", "EnterWorktree", "ExitWorktree"],
     permissionMode: "dontAsk",
     mcpServers: {
@@ -140,6 +163,7 @@ export function agentOptions(
         signal: abortController.signal,
         ...(runCheck ? { run: runCheck } : {}),
       }),
+      [VISUALIZE_VAULT_SERVER]: createVaultServer(),
     },
     hooks: {
       PreToolUse: createGuardHooks(guardContext(work, realDir(studio.skill)), (tool, reason) =>
@@ -157,38 +181,65 @@ export function agentOptions(
     settings: { permissions: { blockWritesOutsideWorkingDirectories: true } },
     env: agentEnv(),
     maxTurns: MAX_TURNS,
-    persistSession: false,
+    // kept on disk (~/.claude/projects, which the sandbox cannot read) so a
+    // message after the run can resume it; the runner deletes it with the job
+    persistSession: true,
     abortController,
     stderr: onStderr,
   };
 }
 
-/** run the agent to the end; never throws */
+/**
+ * Run the agent to the end; never throws. The first turn is `prompt` (the
+ * build, or a resumed session's message); the inbox stays open for the chat's
+ * messages until a result leaves none of them unconsumed, then it closes and
+ * the run ends.
+ */
 export function createAgentRunner(query: typeof sdkQuery = sdkQuery, runCheck?: RunCheck): RunAgent {
-  return async ({ job, studio, paths, signal, log }) => {
+  return async ({ job, studio, paths, signal, log, inbox = createInbox(), resume, prompt, onSession }) => {
     const abort = new AbortController();
     const onAbort = () => abort.abort();
-    if (signal.aborted) return { outcome: "aborted" };
+    if (signal.aborted) {
+      inbox.close();
+      return { outcome: "aborted" };
+    }
     signal.addEventListener("abort", onAbort, { once: true });
 
     let stderr = "";
     let turns: number | undefined;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const places = { work: realDir(paths.work), skill: realDir(studio.skill) };
     try {
+      inbox.push(prompt ?? jobPrompt(job, paths, studio));
       const run = query({
-        prompt: jobPrompt(job, paths, studio),
-        options: agentOptions({ studio, paths, log }, abort, runCheck, (data) => {
-          stderr = (stderr + data).slice(-4000);
-        }),
+        prompt: inbox,
+        options: {
+          ...agentOptions({ studio, paths, log }, abort, runCheck, (data) => {
+            stderr = (stderr + data).slice(-4000);
+          }),
+          ...(resume ? { resume } : {}),
+        },
       });
       let summary: string | undefined;
+      let session: string | undefined;
       for await (const message of run) {
         if (abort.signal.aborted) break;
+        // anything from the agent means the turn that takes the message has begun
+        clearTimeout(grace);
+        if (message.type === "system" && message.subtype === "init" && message.session_id && message.session_id !== session) {
+          session = message.session_id;
+          onSession?.(session);
+        }
+        if (message.type === "assistant" || message.type === "result") inbox.consumed(message.user_message_uuids);
         for (const line of describeMessage(message, places)) log(line);
         if (message.type === "result") {
           turns = message.num_turns;
-          if (message.subtype === "success") summary = message.result;
-          else return { outcome: "error", detail: `the agent stopped: ${message.subtype}`, turns };
+          if (message.subtype !== "success") return { outcome: "error", detail: `the agent stopped: ${message.subtype}`, turns };
+          summary = message.result;
+          // more turns follow on their own while a message is queued or still on its way
+          if ((message.queued_turn_count ?? 0) > 0) continue;
+          if (inbox.settled()) inbox.close();
+          else grace = setTimeout(() => inbox.close(), SETTLE_GRACE_MS);
         }
       }
       if (abort.signal.aborted) return { outcome: "aborted" };
@@ -199,6 +250,8 @@ export function createAgentRunner(query: typeof sdkQuery = sdkQuery, runCheck?: 
       const tail = stderr.trim().split("\n").slice(-3).join(" ");
       return { outcome: "error", detail: tail ? `${message} (${tail})` : message, turns };
     } finally {
+      clearTimeout(grace);
+      inbox.close();
       signal.removeEventListener("abort", onAbort);
     }
   };

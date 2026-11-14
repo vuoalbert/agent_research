@@ -7,6 +7,7 @@ import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  MESSAGE_LINE_PREFIX,
   figureEndpoint,
   formatElapsed,
   isActive,
@@ -31,6 +32,11 @@ import { useCurrentVisualization, useNow } from "./use-jobs";
  *     zoomed or panned drawing slides under the title;
  *   - failed, stopped or interrupted: why, and what it got to;
  *   - before the first: "Ask Claude to visualize something".
+ *
+ * The chat can message the agent (message_visualize): its messages show in
+ * the progress log, a finished figure that was picked back up shows its
+ * progress again until the updated page is ready, and the agent's last reply
+ * (what it changed) sits in the header, after the time.
  *
  * It is polled every few seconds while the page is open. The header leaves
  * room on the left for FullTabView's Back button, which sits over it.
@@ -86,7 +92,8 @@ function CurrentVisualization({
     }
   };
 
-  const figure = Boolean(job.figure);
+  // a figure being updated (the chat messaged its agent) shows its progress, then the new page
+  const figure = Boolean(job.figure) && !active;
 
   return (
     <section
@@ -110,6 +117,16 @@ function CurrentVisualization({
           <span data-elapsed="" className="shrink-0 text-[13px] text-plane-muted tabular-nums">
             {formatElapsed(elapsed)}
           </span>
+        )}
+        {/* the agent's answer to the chat's last message: one line, all of it on hover */}
+        {job.lastReply && (
+          <p
+            data-last-reply=""
+            title={job.lastReply}
+            className="pointer-events-auto min-w-0 truncate text-[13px] text-plane-muted"
+          >
+            <span className="font-medium text-plane-ink-2">Agent:</span> {job.lastReply}
+          </p>
         )}
         {active && (
           <Button variant="outline" size="sm" onClick={stop} disabled={stopping} className="ml-auto text-plane-ink-2">
@@ -139,7 +156,9 @@ function CurrentVisualization({
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-5 pt-4 pb-5">
           {active ? (
             <p className="text-[13px] leading-5 text-plane-muted">
-              Claude is building this figure in the background with the anatomy skill. It usually takes 15–60 minutes.
+              {job.figure
+                ? "Claude is updating this figure with the chat’s message. The new version shows here when it’s done."
+                : "Claude is building this figure in the background with the anatomy skill. It usually takes 15–60 minutes."}
             </p>
           ) : (
             message && (
@@ -176,12 +195,23 @@ function ProgressLog({ lines }: { lines: LogLine[] }) {
       aria-label="Progress"
       className={cn("min-h-0 flex-1 overflow-y-auto font-mono text-[12px] leading-5", NO_SCROLLBAR)}
     >
-      {lines.map((line, index) => (
-        <li key={`${line.t}-${index}`} data-log-line="" className="flex gap-3">
-          <span className="shrink-0 text-plane-faint tabular-nums">{clock(line.t)}</span>
-          <span className="min-w-0 break-words whitespace-pre-wrap text-plane-ink-2">{line.text}</span>
-        </li>
-      ))}
+      {lines.map((line, index) => {
+        // the chat's messages stand out from the agent's own lines
+        const asked = line.text.startsWith(MESSAGE_LINE_PREFIX);
+        return (
+          <li key={`${line.t}-${index}`} data-log-line="" data-message={asked ? "" : undefined} className="flex gap-3">
+            <span className="shrink-0 text-plane-faint tabular-nums">{clock(line.t)}</span>
+            <span
+              className={cn(
+                "min-w-0 break-words whitespace-pre-wrap",
+                asked ? "font-medium text-plane-ink" : "text-plane-ink-2",
+              )}
+            >
+              {line.text}
+            </span>
+          </li>
+        );
+      })}
     </ol>
   );
 }

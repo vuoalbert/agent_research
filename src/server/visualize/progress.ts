@@ -53,6 +53,10 @@ export function describeTool(
       const list = Array.isArray(args) ? args.filter((a): a is string => typeof a === "string") : [];
       return `Browser: ${cut(flat(shorten(`${script} ${list.join(" ")}`)))}`;
     }
+    case "mcp__vault__vault_search":
+      return `Vault: search ${cut(flat(field(input, "query") ?? ""))}`;
+    case "mcp__vault__vault_read":
+      return `Vault: read ${cut(flat(field(input, "note") ?? ""))}`;
     default:
       return name;
   }

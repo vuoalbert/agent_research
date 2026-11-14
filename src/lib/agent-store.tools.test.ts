@@ -185,6 +185,28 @@ describe("agent store — tool calls", () => {
     expect(search[0]).not.toHaveProperty("action");
   });
 
+  it("keeps a message to the Visualize agent as a visualize-message call on its job", () => {
+    const asked = applyToolEvent(undefined, {
+      id: "m",
+      name: "Visualize",
+      action: "visualize-message",
+      jobId: "20261114-1300-a-bicycle-bell-ab12",
+      query: "make the dome blue",
+      status: "running",
+    });
+    expect(applyToolEvent(asked, { id: "m", status: "done" })).toEqual([
+      {
+        id: "m",
+        name: "Visualize",
+        action: "visualize-message",
+        jobId: "20261114-1300-a-bicycle-bell-ab12",
+        query: "make the dome blue",
+        status: "done",
+        sources: [],
+      },
+    ]);
+  });
+
   it("applyToolEvent ignores a repeated start and an end for an unknown call", () => {
     const started = applyToolEvent(undefined, { id: "1", name: "Tavily", query: "q", status: "running" });
     expect(applyToolEvent(started, { id: "1", name: "Tavily", query: "q", status: "running" })).toHaveLength(1);

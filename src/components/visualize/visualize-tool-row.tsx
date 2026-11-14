@@ -22,6 +22,10 @@ import { useVisualizeJob } from "./use-jobs";
  * Two rows carry no job: a call that failed ("· failed"), and one that found
  * a figure still building and so started nothing — that one is all muted:
  * "Visualize already building <subject>".
+ *
+ * A message to the Visualize agent (action "visualize-message") is a muted
+ * row too — "Visualize · Asked: <message>" — that follows the job it went to
+ * the same way: it pulses while the agent applies it and says how it ended.
  */
 
 const SUFFIX: Partial<Record<JobStatus, string>> = {
@@ -32,6 +36,9 @@ const SUFFIX: Partial<Record<JobStatus, string>> = {
   interrupted: "interrupted",
 };
 
+/** a message's row: "applied" once the job it updated is done */
+const MESSAGE_SUFFIX: Partial<Record<JobStatus, string>> = { ...SUFFIX, done: "applied" };
+
 export function VisualizeToolRow({ call }: { call: ToolCall }) {
   const tabView = useTabView();
   const jobId = call.jobId;
@@ -40,7 +47,9 @@ export function VisualizeToolRow({ call }: { call: ToolCall }) {
 
   // undefined until the first answer; "gone" once a newer figure replaced it
   const status: JobStatus | "gone" | undefined = job === null ? "gone" : job?.status;
+  const asked = call.action === "visualize-message";
   const busy = !jobId && call.status === "done";
+  const muted = busy || asked;
   // before the first answer, a call that started a job counts as running
   const pulsing = jobId
     ? status === undefined || (status !== "gone" && isActive(status))
@@ -48,23 +57,24 @@ export function VisualizeToolRow({ call }: { call: ToolCall }) {
   let suffix: string | undefined;
   if (call.status === "error") suffix = "failed";
   else if (status === "gone") suffix = "replaced";
-  else if (status) suffix = SUFFIX[status];
+  else if (status) suffix = (asked ? MESSAGE_SUFFIX : SUFFIX)[status];
 
   const open = (event: MouseEvent<HTMLElement>) => tabView?.openView("Visualize", event.currentTarget);
 
   const body = (
     <>
       <Box aria-hidden size={14} data-icon="box" className="size-3.5 shrink-0 text-[var(--ai-muted)]" />
-      <span className={cn("shrink-0", busy ? "text-[var(--ai-muted)]" : "font-medium text-[var(--ai-ink)]")}>
+      <span className={cn("shrink-0", muted ? "text-[var(--ai-muted)]" : "font-medium text-[var(--ai-ink)]")}>
         Visualize
       </span>
+      {asked && <span className="shrink-0 text-[var(--ai-muted)]">· Asked:</span>}
       <span className="min-w-0 truncate text-[var(--ai-muted)]">{call.query}</span>
       {suffix && <span className="shrink-0 text-[var(--ai-muted)]">· {suffix}</span>}
     </>
   );
   const shared = {
     "data-ai": "tool",
-    "data-action": "visualize",
+    "data-action": asked ? "visualize-message" : "visualize",
     "data-status": busy ? "busy" : (status ?? call.status),
     className: cn(
       "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",

@@ -295,3 +295,79 @@ describe("the Visualize view", () => {
     expect(calls()).toBe(2);
   });
 });
+
+describe("messages to the Visualize agent", () => {
+  const askedCall = (extra: Partial<ToolCall> = {}): ToolCall =>
+    visualizeCall({ id: "m1", action: "visualize-message", query: "make the bell dome blue", ...extra });
+
+  it("is a muted 'Visualize · Asked: …' row that pulses while the agent applies it, then says it was applied", async () => {
+    current = job("running");
+    const { container } = render(<VisualizeToolRow call={askedCall()} />);
+    const row = container.querySelector('[data-ai="tool"]') as HTMLElement;
+    expect(row.dataset.action).toBe("visualize-message");
+    expect(row.textContent).toBe("Visualize· Asked:make the bell dome blue");
+    expect(within(row).getByText("Visualize").className).toContain("text-[var(--ai-muted)]");
+    expect(within(row).getByText("Visualize").className).not.toContain("font-medium");
+    await flush();
+    expect(row.className).toContain("animate-pulse");
+
+    current = job("done", { figure: "figure.html" });
+    await flush(3000);
+    expect(row.className).not.toContain("animate-pulse");
+    expect(row.textContent).toBe("Visualize· Asked:make the bell dome blue· applied");
+  });
+
+  it("is a failed row when the message could not be sent", () => {
+    const { container } = render(<VisualizeToolRow call={askedCall({ jobId: undefined, status: "error" })} />);
+    expect(container.textContent).toBe("Visualize· Asked:make the bell dome blue· failed");
+  });
+
+  it("goes in the thread where the wrench row would", async () => {
+    current = job("running");
+    const message: Message = {
+      id: "a1",
+      role: "assistant",
+      content: "The Visualize agent is applying it.",
+      createdAt: 2,
+      tools: [askedCall()],
+    };
+    const { container } = render(<AiThread messages={[message]} />);
+    await flush();
+    const row = container.querySelector('[data-action="visualize-message"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.querySelector("svg.lucide-box")).not.toBeNull();
+  });
+
+  it("shows the agent's last reply under the title", async () => {
+    current = job("done", { figure: "figure.html", lastReply: "Made the dome blue and labelled the striker." });
+    const { container } = render(<VisualizeView />);
+    await flush();
+    const reply = container.querySelector("[data-last-reply]") as HTMLElement;
+    expect(reply.textContent).toBe("Agent: Made the dome blue and labelled the striker.");
+    expect(container.querySelector("iframe")).not.toBeNull();
+  });
+
+  it("shows progress, not the old page, while a finished figure is being updated — then the new page", async () => {
+    current = job("running", {
+      figure: "figure.html",
+      log: [
+        { t: NOW - 20_000, text: "Message from chat: add a caption saying 'ring ring'" },
+        { t: NOW - 10_000, text: "Resumed the background agent's session to apply it" },
+      ],
+    });
+    const { container } = render(<VisualizeView />);
+    await flush();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.textContent).toContain("updating this figure with the chat’s message");
+    const lines = [...container.querySelectorAll("[data-log-line]")] as HTMLElement[];
+    // the chat's message stands out from the agent's own lines
+    expect(lines[0].hasAttribute("data-message")).toBe(true);
+    expect(lines[0].querySelector(".font-medium")?.textContent).toBe("Message from chat: add a caption saying 'ring ring'");
+    expect(lines[1].hasAttribute("data-message")).toBe(false);
+
+    current = job("done", { figure: "figure.html", lastReply: "Added the caption." });
+    await flush(3000);
+    expect(container.querySelector("iframe")).not.toBeNull();
+    expect(container.querySelector("[data-last-reply]")?.textContent).toBe("Agent: Added the caption.");
+  });
+});

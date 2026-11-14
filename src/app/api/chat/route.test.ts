@@ -121,6 +121,8 @@ describe("POST /api/chat", () => {
       "mcp__research__vault_write",
       "mcp__research__deploy_subagents",
       "mcp__visualize__visualize",
+      "mcp__visualize__message_visualize",
+      "mcp__visualize__visualize_status",
     ]);
     expect(options.permissionMode).toBe("dontAsk");
     expect(options.maxTurns).toBe(16);

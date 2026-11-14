@@ -47,8 +47,11 @@ describe("the agent's options", () => {
     expect(options.disallowedTools).toEqual(expect.arrayContaining(["WebFetch", "WebSearch", "Agent", "Task"]));
     expect(options.permissionMode).toBe("dontAsk");
     expect(options.maxTurns).toBe(300);
-    expect(options.persistSession).toBe(false);
-    expect(Object.keys(options.mcpServers ?? {})).toEqual(["studio"]);
+    // kept, so a message after the run can resume it
+    expect(options.persistSession).toBe(true);
+    expect(Object.keys(options.mcpServers ?? {})).toEqual(["studio", "vault"]);
+    expect(options.allowedTools).toEqual(expect.arrayContaining(["mcp__vault__vault_search", "mcp__vault__vault_read"]));
+    expect(options.allowedTools).not.toContain("mcp__vault__vault_write");
     expect(options.hooks?.PreToolUse?.[0].onFailure).toBe("block");
   });
 

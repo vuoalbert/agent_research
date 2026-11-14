@@ -1,4 +1,4 @@
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool, type SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
 import { getRunner, type StartInput, type StartResult } from "@/server/visualize/runner";
@@ -29,6 +29,9 @@ import { researchBrief } from "./visualize-brief";
  *     (not explicit, so a figure still building is left alone), with a brief
  *     of the turn's facts (visualize-brief.ts). So every research turn yields
  *     exactly one visualization attempt, whatever the model chose.
+ *   - `tools`: more tools for the same server (the chat's line to the agent,
+ *     visualize-message-tool.ts); `claim()` says the turn has its figure
+ *     already — a message reached it — so `finish` starts none.
  */
 
 export const VISUALIZE_SERVER = "visualize";
@@ -94,6 +97,7 @@ export function createVisualizeTurn({
   researchTools,
   crossrefTool,
   start = defaultStart,
+  tools = [],
 }: {
   onActivity: (activity: VisualizeActivity) => void;
   /** the tool names (as Claude Code knows them) that count as research */
@@ -101,6 +105,8 @@ export function createVisualizeTurn({
   /** which of them is cross_reference, whose table feeds the brief's claims */
   crossrefTool?: string;
   start?: StartJob;
+  // `any`: the SDK types its own tools list this way
+  tools?: SdkMcpToolDefinition<any>[];
 }) {
   let researched = false;
   let attempted = false;
@@ -176,11 +182,16 @@ export function createVisualizeTurn({
           return text(message, isError);
         },
       ),
+      ...tools,
     ],
   });
 
   return {
     server,
+    /** the turn's figure is taken care of (a message reached the current one): no automatic start */
+    claim() {
+      attempted = true;
+    },
     /** see each SDK message of the turn: research calls and results, and the answer's text */
     observe(message: unknown) {
       const m = message as { type?: string; message?: { content?: unknown } };

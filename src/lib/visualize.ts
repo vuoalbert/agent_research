@@ -29,6 +29,12 @@ export type JobRecord = {
   /** the server process that queued or ran it, so a restart can tell its own jobs from orphans */
   pid?: number;
   turns?: number;
+  /** the agent's Claude Code session, so a message can resume it after the run ended */
+  sessionId?: string;
+  /** the agent's latest reply to a message from the chat: what it changed */
+  lastReply?: string;
+  /** how many messages the chat has sent it */
+  messages?: number;
 };
 
 /** one line of `jobs/<id>/progress.log` */
@@ -51,6 +57,9 @@ export const JOBS_ENDPOINT = "/api/visualize/jobs";
 export const jobEndpoint = (id: string) => `${JOBS_ENDPOINT}/${encodeURIComponent(id)}`;
 export const figureEndpoint = (id: string) => `${jobEndpoint(id)}/figure`;
 export const stopEndpoint = (id: string) => `${jobEndpoint(id)}/stop`;
+
+/** how a message from the chat shows in the job's progress log */
+export const MESSAGE_LINE_PREFIX = "Message from chat: ";
 
 /** how often the view and a running tool row ask for news */
 export const POLL_MS = 3000;

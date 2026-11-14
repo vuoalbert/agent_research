@@ -62,10 +62,11 @@ export type ToolCall = {
   id: string;
   name: string;
   /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
-   *  "vault" for a vault search/read/write, "visualize" for a figure job, "subagents" for a
-   *  deploy_subagents group, "world" for the chat's World Labs world; absent for a search,
-   *  and on chats saved before reads */
-  action?: "read" | "crossref" | "vault" | "visualize" | "subagents" | "world";
+   *  "vault" for a vault search/read/write, "visualize" for a figure job, "visualize-message"
+   *  for a message to the agent building one, "subagents" for a deploy_subagents group,
+   *  "world" for the chat's World Labs world; absent for a search, and on chats saved
+   *  before reads */
+  action?: "read" | "crossref" | "vault" | "visualize" | "visualize-message" | "subagents" | "world";
   /** a vault call's kind, for its row's verb */
   op?: "search" | "read" | "write";
   /** a Visualize call's background job, which the row follows after the call itself is done */
@@ -85,7 +86,15 @@ export type ToolCall = {
   agentId?: string;
 };
 
-const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = ["read", "crossref", "vault", "visualize", "subagents", "world"];
+const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = [
+  "read",
+  "crossref",
+  "vault",
+  "visualize",
+  "visualize-message",
+  "subagents",
+  "world",
+];
 
 export type Message = {
   id: string;

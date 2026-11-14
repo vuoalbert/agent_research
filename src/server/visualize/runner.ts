@@ -1,8 +1,12 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 
-import { isActive, type JobDetail, type JobRecord, type JobSummary } from "@/lib/visualize";
+import { deleteSession } from "@anthropic-ai/claude-agent-sdk";
+
+import { MESSAGE_LINE_PREFIX, isActive, type JobDetail, type JobRecord, type JobSummary } from "@/lib/visualize";
 
 import { createAgentRunner, type RunAgent } from "./agent";
+import { createInbox, type Inbox } from "./inbox";
+import { liveMessage, replyFrom, resumeMessage } from "./messages";
 import { isJobId, jobPaths, newJobId, studioPaths, type StudioPaths } from "./paths";
 import { createJobStore } from "./store";
 
@@ -27,6 +31,18 @@ import { createJobStore } from "./store";
  * - When a job ends, the runner copies `work/figure.html` beside the work
  *   folder; that copy is what the figure route serves, so the agent can never
  *   change a finished page.
+ * - `sendMessage` (the chat's message_visualize) talks to the agent behind
+ *   the current visualization. While it is building, the message goes into
+ *   the live session (inbox.ts) and the agent reads it between tool calls.
+ *   Once it has ended — done, stopped, failed or interrupted — the message
+ *   resumes its saved session (`sessionId`) in the same job: status running
+ *   again, a fresh 60 minutes, the agent edits its build and re-copies the
+ *   page, which is copied again when it ends. Still one visualization at a
+ *   time: a resumed one is "building" to `startJob` like any other. A message
+ *   that misses a closing run (or that no turn took before it ended) resumes
+ *   the session once that run has settled, unless the user stopped it.
+ *   The agent's reply to a run that carried a message is the job's
+ *   `lastReply`.
  *
  * One runner per server process (`getRunner`), kept on `globalThis` so the
  * dev server's module reloads do not start a second one or re-run recovery.
@@ -58,12 +74,26 @@ export type StartResult =
   | { status: "started"; job: JobRecord; replaced?: string }
   | { status: "busy"; job: JobRecord };
 
+/** what became of a message for the Visualize agent */
+export type MessageResult =
+  | { status: "none" }
+  /** delivered into the run in progress (or to the resume that follows it) */
+  | { status: "live"; job: JobRecord }
+  /** the visualization had ended: its session resumed with the message */
+  | { status: "resumed"; job: JobRecord }
+  | { status: "unavailable"; job: JobRecord; reason: string };
+
+/** a message is one request, not a document */
+export const MAX_MESSAGE = 2000;
+
 export type RunnerOptions = {
   paths?: StudioPaths;
   runAgent?: RunAgent;
   timeoutMs?: number;
   now?: () => number;
   pid?: number;
+  /** drop a discarded job's agent session from disk (best effort) */
+  forgetSession?: (sessionId: string) => void;
 };
 
 type Slot = {
@@ -71,6 +101,23 @@ type Slot = {
   abort: AbortController;
   reason?: "stop" | "timeout" | "discard";
   settled: Promise<void>;
+  /** the run's input: the chat's messages go in here while it is open */
+  inbox: Inbox;
+  /** the chat's messages pushed into this run, to tell the ones no turn took */
+  sent: { uuid: string; text: string }[];
+  /** messages that came after the inbox closed: they resume the session once this run has settled */
+  carry: string[];
+  /** this run carried a message, so its last reply answers it */
+  answered: boolean;
+  sessionId?: string;
+  /** the job has been settled for this run (a Stop that ran out of grace does it early) */
+  finished?: boolean;
+};
+
+const defaultForget = (sessionId: string) => {
+  deleteSession(sessionId).catch(() => {
+    /* already gone, or never written */
+  });
 };
 
 export function createRunner({
@@ -79,15 +126,19 @@ export function createRunner({
   timeoutMs = TIMEOUT_MS,
   now = Date.now,
   pid = process.pid,
+  forgetSession = defaultForget,
 }: RunnerOptions = {}) {
   const store = createJobStore(paths, now);
   let current: Slot | null = null;
   let idle: Promise<void> = Promise.resolve();
 
-  /** delete a job's folder: it has been replaced */
+  /** delete a job's folder, and its agent's session: it has been replaced */
   function discard(id: string) {
     if (!isJobId(id)) return;
+    // a run still winding down forgets its session once it has settled
+    const sessionId = current?.id === id ? undefined : store.read(id)?.sessionId;
     rmSync(jobPaths(paths, id).dir, { recursive: true, force: true });
+    if (sessionId) forgetSession(sessionId);
   }
 
   /** every job folder but `keep`'s goes */
@@ -180,10 +231,20 @@ export function createRunner({
     return { status: "started", job: record, ...(existing ? { replaced: existing.id } : {}) };
   }
 
-  function run(record: JobRecord) {
+  /** run the agent: the build, or (`resumeWith`) its saved session with the chat's messages */
+  function run(record: JobRecord, resumeWith?: { sessionId: string; messages: string[] }) {
     const { id } = record;
     const abort = new AbortController();
-    const slot: Slot = { id, abort, settled: Promise.resolve() };
+    const slot: Slot = {
+      id,
+      abort,
+      settled: Promise.resolve(),
+      inbox: createInbox(),
+      sent: [],
+      carry: [],
+      answered: resumeWith !== undefined,
+      ...(resumeWith ? { sessionId: resumeWith.sessionId } : {}),
+    };
     current = slot;
 
     const timer = setTimeout(() => {
@@ -201,25 +262,105 @@ export function createRunner({
           paths: jobPaths(paths, id),
           signal: abort.signal,
           log: (line) => store.appendLog(id, line),
+          inbox: slot.inbox,
+          ...(resumeWith ? { resume: resumeWith.sessionId, prompt: resumeMessage(resumeWith.messages) } : {}),
+          onSession: (sessionId) => {
+            slot.sessionId = sessionId;
+            // saved at once, so even a run cut short by a restart can be resumed
+            if (slot.reason !== "discard") store.update(id, { sessionId });
+          },
         });
       } catch (error) {
         result = { outcome: "error", detail: error instanceof Error ? error.message : String(error) };
       } finally {
         clearTimeout(timer);
+        slot.inbox.close();
       }
-      // a discarded job's folder is gone: there is nothing to settle
-      if (slot.reason !== "discard") finish(id, result, slot.reason);
       if (current === slot) current = null;
+      // a discarded job's folder is gone: there is nothing to settle
+      if (slot.reason === "discard") {
+        if (slot.sessionId) forgetSession(slot.sessionId);
+        return;
+      }
+      // settled early by a Stop: the job may be running a resume by now
+      if (slot.finished) return;
+      finish(id, result, slot);
+      // the messages this run missed resume it now (unless the user stopped it)
+      const missed = slot.reason === "stop" ? [] : slot.sent.filter((m) => slot.inbox.isPending(m.uuid)).map((m) => m.text);
+      const late = [...missed, ...slot.carry];
+      if (late.length && !current) {
+        const record = store.read(id);
+        if (record?.sessionId) resume(record, late);
+        else store.appendLog(id, "Couldn't pass on the chat's message: the agent's session wasn't saved");
+      } else if (slot.reason === "stop" && slot.sent.some((m) => slot.inbox.isPending(m.uuid))) {
+        store.appendLog(id, "The chat's last message wasn't applied: the agent was stopped first");
+      }
     })();
     idle = slot.settled;
   }
 
-  function finish(id: string, result: Awaited<ReturnType<RunAgent>>, reason?: Slot["reason"]) {
+  /** the job's session again, with these messages as its next turn */
+  function resume(record: JobRecord, messages: string[]): JobRecord {
+    const { endedAt: _ended, error: _error, note: _note, ...rest } = record;
+    const next = store.write({ ...rest, status: "running", startedAt: now(), pid });
+    store.appendLog(record.id, "Resumed the background agent's session to apply it");
+    run(next, { sessionId: record.sessionId!, messages });
+    return next;
+  }
+
+  /**
+   * A message from the chat for the agent behind the current visualization:
+   * into the live run, or a resume of the finished one (see the top).
+   */
+  function sendMessage(message: string): MessageResult {
+    const text = message.trim().slice(0, MAX_MESSAGE);
+    if (!text) throw new Error("A message needs some text.");
+    const record = latest();
+    if (!record) return { status: "none" };
+    const { id } = record;
+
+    if (current?.id === id) {
+      const slot = current;
+      store.appendLog(id, `${MESSAGE_LINE_PREFIX}${text}`);
+      const counted = store.update(id, { messages: (record.messages ?? 0) + 1 }) ?? record;
+      // a run already stopping or timing out takes nothing more: it resumes with it
+      const uuid = slot.reason ? null : slot.inbox.push(liveMessage(text));
+      if (uuid) {
+        slot.sent.push({ uuid, text });
+        slot.answered = true;
+      } else slot.carry.push(text);
+      return { status: "live", job: counted };
+    }
+    if (isActive(record.status))
+      return { status: "unavailable", job: record, reason: "It is still starting up; try again in a moment." };
+    if (!record.sessionId)
+      return {
+        status: "unavailable",
+        job: record,
+        reason: "Its agent session wasn't saved (it was built before messaging, or failed at the start), so it can't be changed; start a new visualization instead.",
+      };
+    if (!ready()) throw new StudioNotReadyError();
+    store.appendLog(id, `${MESSAGE_LINE_PREFIX}${text}`);
+    const counted = { ...record, messages: (record.messages ?? 0) + 1 };
+    return { status: "resumed", job: resume(counted, [text]) };
+  }
+
+  function finish(id: string, result: Awaited<ReturnType<RunAgent>>, slot?: Slot) {
+    if (slot) slot.finished = true;
+    const reason = slot?.reason;
     const record = store.read(id);
     if (!record || record.status !== "running") return;
     const figure = keepFigure(id);
     const turns = "turns" in result ? result.turns : undefined;
-    const base = { ...record, endedAt: now(), ...(figure ? { figure } : {}), ...(turns ? { turns } : {}) };
+    // the agent's answer to the chat's message(s): what it changed
+    const reply = slot?.answered && result.outcome === "success" ? replyFrom(result.summary) : undefined;
+    const base = {
+      ...record,
+      endedAt: now(),
+      ...(figure ? { figure } : {}),
+      ...(turns ? { turns } : {}),
+      ...(reply ? { lastReply: reply } : {}),
+    };
 
     let next: JobRecord;
     if (reason === "stop") {
@@ -258,7 +399,7 @@ export function createRunner({
     const grace = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), STOP_GRACE_MS));
     if ((await Promise.race([slot.settled.then(() => "settled" as const), grace])) === "late") {
       // the agent did not wind down in time: settle the job anyway
-      finish(id, { outcome: "aborted" }, "stop");
+      finish(id, { outcome: "aborted" }, slot);
       if (current === slot) current = null;
     }
     return store.read(id);
@@ -292,6 +433,7 @@ export function createRunner({
 
   return {
     startJob,
+    sendMessage,
     stopJob,
     getJob,
     currentJob,

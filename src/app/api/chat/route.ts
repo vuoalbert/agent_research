@@ -7,6 +7,12 @@ import { parseSources } from "./sources";
 import { SUBAGENTS_TOOL_ID, createSubagentsTool } from "./subagents";
 import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type PageSeen, type Source } from "./tavily";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
+import {
+  MESSAGE_VISUALIZE_TOOL_ID,
+  VISUALIZE_MESSAGE_PROMPT,
+  VISUALIZE_STATUS_TOOL_ID,
+  createVisualizeMessageTools,
+} from "./visualize-message-tool";
 import { VISUALIZE_PROMPT, VISUALIZE_SERVER, VISUALIZE_TOOL_ID, createVisualizeTurn } from "./visualize-tool";
 import { createWorldTurn } from "./world-turn";
 
@@ -40,6 +46,9 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *                            data: {"id","name":"Visualize","action":"visualize","query","jobId","status":"running"}
  *                                  (then "done" once the job is queued; see visualize-tool.ts —
  *                                  a research turn always ends with exactly one)
+ *                            data: {"id","name":"Visualize","action":"visualize-message","query","jobId","status":"running"}
+ *                                  (a message to the Visualize agent; then "done" or "error",
+ *                                  see visualize-message-tool.ts)
  *                            data: {"id","name":"World Labs","action":"world","query","chatId","status":"running"} → {"id","status":"done"}
  *                                  (a chat's FIRST research turn starts its one World Labs world; see world-turn.ts)
  *             event: done    data: {}
@@ -175,6 +184,9 @@ export async function POST(request: Request) {
         // a deploy_subagents call is research too: its result is the subagents' findings
         researchTools,
         crossrefTool: CROSSREF_TOOL_ID,
+        // the chat's line to the agent behind the current figure; a message
+        // that reached it is this turn's visualization
+        tools: createVisualizeMessageTools({ onActivity: report, onSent: () => visualize.claim() }),
       });
       // every page a search or read returned — the chat's own or a subagent's —
       // goes to cross_reference's log and the vault recorder
@@ -191,7 +203,7 @@ export async function POST(request: Request) {
             model: MODEL,
             effort: EFFORT,
             thinking: { type: "adaptive" },
-            systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}`,
+            systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}\n${VISUALIZE_MESSAGE_PROMPT}`,
             // No built-in tools and no filesystem settings: `tools: []` turns the
             // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
             // and hooks out. The tools are Tavily search and read, pre-approved;
@@ -216,6 +228,8 @@ export async function POST(request: Request) {
               ...VAULT_TOOL_IDS,
               SUBAGENTS_TOOL_ID,
               VISUALIZE_TOOL_ID,
+              MESSAGE_VISUALIZE_TOOL_ID,
+              VISUALIZE_STATUS_TOOL_ID,
             ],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,

@@ -3,6 +3,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { HookCallbackMatcher } from "@anthropic-ai/claude-agent-sdk";
 
 import { isInside, realTarget } from "./paths";
+import { VISUALIZE_VAULT_TOOL_IDS } from "./vault-server";
 
 /**
  * The background agent's PreToolUse policy: which tool calls may go ahead.
@@ -393,6 +394,8 @@ export function checkToolUse(tool: string, input: unknown, ctx: GuardContext, cw
     case BROWSER_TOOL_ID:
       return ALLOW; // it checks its own arguments, and runs under its own seatbelt profile
     default:
+      // the research vault, read-only and in-process (vault-server.ts)
+      if (VISUALIZE_VAULT_TOOL_IDS.includes(tool)) return ALLOW;
       return deny(`${tool} is not available in this studio`);
   }
 }
