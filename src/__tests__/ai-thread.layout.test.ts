@@ -3,8 +3,8 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * The two things about the thread that only a real layout can answer: where the
- * first turn sits, and where the scroller ends up after a send. jsdom reports
+ * The things about the thread that only a real layout can answer: where the
+ * first turn sits, and where a sent or reopened turn ends up. jsdom reports
  * every box as 0x0, so the unit test next door can only assert the classes.
  *
  * Opt-in, because it needs the app running:
@@ -44,6 +44,14 @@ suite("AI thread — measured layout", () => {
       reducedMotion: "reduce",
     });
     await context.addInitScript(seedScript(turns));
+    // never a real model request: the reply is a canned stream
+    await context.route("**/api/chat", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: 'event: delta\ndata: {"text":"A short reply."}\n\nevent: done\ndata: {}\n\n',
+      }),
+    );
     const page = await context.newPage();
     await page.goto(`${URL}/`, { waitUntil: "networkidle" });
     await page.evaluate(() => document.fonts.ready);
@@ -82,20 +90,41 @@ suite("AI thread — measured layout", () => {
     await page.close();
   });
 
-  it("scrolls a long thread to the newest message after a send", async () => {
+  /** the last user turn's top, and the bottom of the turn before it, in the viewport */
+  const lastSent = (page: Page) =>
+    page.evaluate(() => {
+      const s = document.querySelector('[data-ai="thread"]') as HTMLElement;
+      const view = s.getBoundingClientRect();
+      const turns = [...s.querySelectorAll("[data-role]")];
+      const sent = turns.filter((turn) => turn.getAttribute("data-role") === "user").at(-1)!;
+      const before = turns[turns.indexOf(sent) - 1]!;
+      return {
+        top: sent.getBoundingClientRect().top - view.top,
+        before: before.getBoundingClientRect().bottom - view.top,
+      };
+    });
+
+  it("settles a sent message at the very top, with nothing of the turn before", async () => {
     const page = await open(30);
     const field = page.locator('[data-composer="docked"] textarea');
     await field.fill("and one more line to push the thread along");
     await field.press("Enter");
     await page.waitForTimeout(400);
 
-    const box = await page.evaluate(() => {
-      const s = document.querySelector('[data-ai="thread"]') as HTMLElement;
-      return { scrollTop: s.scrollTop, scrollHeight: s.scrollHeight, clientHeight: s.clientHeight };
-    });
-    // taller than the pane, and parked at the bottom
-    expect(box.scrollHeight).toBeGreaterThan(box.clientHeight);
-    expect(box.scrollTop + box.clientHeight).toBeGreaterThanOrEqual(box.scrollHeight - 2);
+    const box = await lastSent(page);
+    // the list's own 24px above it, and the previous turn scrolled fully out
+    expect(box.top).toBeGreaterThanOrEqual(23);
+    expect(box.top).toBeLessThanOrEqual(25);
+    expect(box.before).toBeLessThanOrEqual(0.5);
+    await page.close();
+  });
+
+  it("reopens a long thread where the last send left it", async () => {
+    const page = await open(30);
+    const box = await lastSent(page);
+    expect(box.top).toBeGreaterThanOrEqual(23);
+    expect(box.top).toBeLessThanOrEqual(25);
+    expect(box.before).toBeLessThanOrEqual(0.5);
     await page.close();
   });
 });

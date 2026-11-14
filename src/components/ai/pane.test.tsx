@@ -1,4 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AiPane } from "@/components/ai/pane";
@@ -10,7 +12,7 @@ import {
   MARK_RISE,
   MARK_SIZE,
 } from "@/components/ai/tokens";
-import { getAgentState, newChat, __resetAgentStore } from "@/lib/agent-store";
+import { STORAGE_KEY, getAgentState, newChat, __resetAgentStore } from "@/lib/agent-store";
 import { DURATION, POP_SCALE, SHIFT, bodyVariants, popVariants, timing } from "@/lib/motion-tokens";
 
 /**
@@ -372,12 +374,118 @@ describe("AiPane", () => {
     expect(document.querySelectorAll('[data-slot="empty"]')).toHaveLength(2);
   });
 
-  it("hides every native scrollbar it makes", () => {
+  it("hides every native scrollbar it makes", async () => {
     pane();
     const field = document.querySelector("textarea") as HTMLElement;
     const cards = document.querySelector('[data-ai="home-cards"]')?.parentElement as HTMLElement;
     expect(field.className).toContain("[&::-webkit-scrollbar]:hidden");
     expect(cards.className).toContain("[&::-webkit-scrollbar]:hidden");
+
+    // the thread's viewport ships `scrollbar-thin scrollbar-gutter-stable`;
+    // left in, `thin` beat the arbitrary `[scrollbar-width:none]` and drew a
+    // bar down the card's edge, so they have to be merged out, not added to
+    send("hello");
+    const thread = await waitFor(() => document.querySelector('[data-ai="thread"]') as HTMLElement);
+    const classes = thread.className.split(" ");
+    expect(classes).toContain("scrollbar-none");
+    expect(classes).not.toContain("scrollbar-thin");
+    expect(classes).not.toContain("scrollbar-gutter-stable");
+    expect(thread.className).toContain("[&::-webkit-scrollbar]:hidden");
+  });
+});
+
+/** the motion.div the thread is swapped in by, and the list inside it */
+const threadSlot = () =>
+  document.querySelector('[data-ai="thread"]')?.closest('[data-slot="message-scroller"]')
+    ?.parentElement as HTMLElement | undefined;
+const threadList = () => document.querySelector('[data-ai="thread-list"]') as HTMLElement | null;
+
+describe("AiPane — what plays and what is simply there", () => {
+  beforeEach(() => {
+    __resetAgentStore();
+    vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(new TextEncoder().encode("event: done\ndata: {}\n\n"), { status: 200 }),
+      ),
+    );
+  });
+
+  /** a conversation an earlier visit left open */
+  const saveOpenChat = () => {
+    const now = Date.now();
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        chats: [{ id: "chat-saved", title: "Saved chat", createdAt: now, updatedAt: now }],
+        messages: {
+          "chat-saved": [
+            { id: "m1", role: "user", content: "Where did we leave it?", createdAt: now },
+            { id: "m2", role: "assistant", content: "At the packing list.", createdAt: now + 1 },
+          ],
+        },
+        activeChatId: "chat-saved",
+        groups: [],
+      }),
+    );
+  };
+
+  it("reloads into an open chat without drawing the home screen first", async () => {
+    saveOpenChat();
+
+    // The server cannot read localStorage, so whatever it draws is a guess.
+    // It used to guess the home screen, which painted and then animated away.
+    // Now it draws the strip and nothing below it.
+    const html = renderToString(<AiPane />);
+    expect(html).toContain('data-region="ai-pane"');
+    expect(html).not.toContain("data-composer");
+    expect(html).not.toContain("data-chat-card");
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.append(container);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await act(async () => {
+      hydrateRoot(container, <AiPane />);
+    });
+
+    // hydration matched, and the restored chat is the first thing drawn
+    expect(errors).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-composer]")?.getAttribute("data-composer")).toBe("docked");
+    expect(container.querySelector("[data-chat-card]")).toBeNull();
+    // ...already in its final state: nothing fades or travels in
+    expect(threadSlot()?.style.opacity).toBe("1");
+    expect(threadList()?.style.opacity).toBe("1");
+    expect(threadList()?.style.transform).toBe("none");
+    container.remove();
+  });
+
+  it("cuts straight to a chat opened from its card", async () => {
+    render(<AiPane />);
+    await waitFor(() => expect(getAgentState().chats).toHaveLength(SEEDED));
+
+    const [, second] = getAgentState().chats;
+    fireEvent.click(document.querySelector(`[data-chat-card="${second.id}"]`) as HTMLElement);
+
+    // the first render of the open chat is its last: the cards are gone
+    // rather than fading out, and the thread is at full opacity, no travel
+    expect(document.querySelector('[data-composer="docked"]')).toBeTruthy();
+    expect(document.querySelector("[data-chat-card]")).toBeNull();
+    expect(threadSlot()?.style.opacity).toBe("1");
+    expect(threadList()?.style.opacity).toBe("1");
+    expect(threadList()?.style.transform).toBe("none");
+  });
+
+  it("plays the dock only for a send from the home box", () => {
+    render(<AiPane />);
+    const field = document.querySelector("textarea") as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "hello" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    // the thread starts from its entrance state and is animated from there
+    expect(threadSlot()?.style.opacity).toBe("0");
+    expect(threadList()?.style.opacity).toBe("0");
   });
 });
 
