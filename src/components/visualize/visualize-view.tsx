@@ -90,7 +90,7 @@ function CurrentVisualization({
       className={cn("flex flex-col bg-plane-pane", className)}
     >
       {/* pl leaves the Back button (16px in, ~72px wide) its corner */}
-      <header className="flex h-[60px] shrink-0 items-center gap-3 border-b border-plane-border pr-5 pl-[104px]">
+      <header className="flex h-[60px] shrink-0 items-center gap-3 pr-5 pl-[104px]">
         <h2 className="min-w-0 truncate text-[15px] leading-6 font-medium text-plane-ink">{job.subject}</h2>
         {/* no chip once it is done: the finished figure says that itself */}
         {job.status !== "done" && <StatusChip status={job.status} />}
