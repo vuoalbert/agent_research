@@ -1,0 +1,76 @@
+/*
+ * The parts of an assistant reply that Streamdown and KaTeX build themselves,
+ * so `markdown.tsx` can't hand them classes. Unlayered on purpose: it wins over
+ * Streamdown's Tailwind utilities without needing `!important`.
+ */
+
+/* inline code: a light grey chip */
+[data-ai="markdown"] [data-streamdown="inline-code"] {
+  border-radius: 5px;
+  background: var(--ai-chip);
+  padding: 1px 5px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.875em;
+  color: var(--ai-ink);
+}
+
+/* code blocks: #F9F9F9 card, 8px radius, 1px #EAEBEC border */
+[data-ai="markdown"] [data-streamdown="code-block"] {
+  margin: 0.75em 0;
+  gap: 0;
+  border: 1px solid #eaebec;
+  border-radius: 8px;
+  background: #f9f9f9;
+  padding: 0;
+  /* Streamdown sets `content-visibility: auto` inline, which sizes an unpainted
+     block at a 200px guess. The thread measures real heights to land a sent
+     message at the top, so every block is laid out for real. */
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
+}
+[data-ai="markdown"] [data-streamdown="code-block-header"] {
+  height: auto;
+  padding: 8px 12px 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ai-muted);
+}
+[data-ai="markdown"] [data-streamdown="code-block-actions"] {
+  top: 4px;
+  right: 6px;
+}
+[data-ai="markdown"] [data-streamdown="code-block-body"] {
+  border: 0;
+  border-radius: 0 0 8px 8px;
+  background: transparent !important;
+  padding: 8px 12px 12px;
+  font-size: 13.5px;
+  line-height: 21px;
+}
+[data-ai="markdown"] [data-streamdown="code-block"] pre,
+[data-ai="markdown"] [data-streamdown="code-block"] code {
+  background: transparent !important;
+}
+
+/* block math: centered, scrolls sideways when wide */
+[data-ai="markdown"] .katex-display {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+  text-align: center;
+}
+[data-ai="markdown"] .katex {
+  color: var(--ai-ink);
+  font-size: 1.08em;
+}
+
+/* no visible scrollbars anywhere in a reply */
+[data-ai="markdown"],
+[data-ai="markdown"] * {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+[data-ai="markdown"] *::-webkit-scrollbar {
+  display: none;
+}

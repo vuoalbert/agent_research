@@ -49,6 +49,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import { DURATION, bodyVariants, popVariants, timing, useReduced } from "@/lib/motion-tokens";
 
+import { Markdown } from "@/components/ai/markdown";
 import { NO_SCROLLBAR, THREAD_COLUMN, THREAD_GLIDE } from "@/components/ai/tokens";
 import {
   MessageScroller,
@@ -336,9 +337,9 @@ export function AiThread({
                           ))}
                         </span>
                       ) : (
-                        <p className="px-1 py-2 text-[16px] leading-[25px] text-[var(--ai-muted)]">
+                        <Markdown streaming={streaming && index === messages.length - 1}>
                           {message.content}
-                        </p>
+                        </Markdown>
                       )}
                     </>
                   )}

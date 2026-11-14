@@ -202,7 +202,7 @@ describe("AiPane", () => {
 
     const answered = await waitFor(
       () => {
-        const el = document.querySelector('[data-role="assistant"] p');
+        const el = document.querySelector('[data-role="assistant"] [data-ai="markdown"]');
         if (!el) throw new Error("no reply yet");
         return el as HTMLElement;
       },
