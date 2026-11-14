@@ -76,8 +76,8 @@ export type ToolCall = {
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
-  /** a Telem search or read: the providers that answered, for the row's hover title */
-  providers?: string[];
+  /** a Telem search or read: who answered and how long it took, for the row's hover title only */
+  telem?: { providers: string[]; latencyMs: number };
   /** a cross_reference's claims and source↔source relations */
   crossref?: Crossref;
   /** a "subagents" group: each subagent's state, as the route last reported it */
@@ -506,8 +506,16 @@ type ToolEvent =
       parentId?: string;
       agentId?: string;
     }
-  | { id: string; status: "done"; sources?: Source[]; providers?: unknown; crossref?: Crossref; subagents?: unknown }
-  | { id: string; status: "error" };
+  | { id: string; status: "done"; sources?: Source[]; telem?: unknown; crossref?: Crossref; subagents?: unknown }
+  | { id: string; status: "error"; telem?: unknown };
+
+/** a Telem row's `{ providers, latencyMs }`, checked; anything else is dropped */
+function telemOf(value: unknown): { telem?: NonNullable<ToolCall["telem"]> } {
+  if (!value || typeof value !== "object") return {};
+  const { providers, latencyMs } = value as Record<string, unknown>;
+  if (!Array.isArray(providers) || typeof latencyMs !== "number" || !Number.isFinite(latencyMs)) return {};
+  return { telem: { providers: providers.filter((p): p is string => typeof p === "string").slice(0, 12), latencyMs } };
+}
 
 /**
  * Fold one `tool` frame into a turn's calls: a start appends, an end updates in
@@ -547,13 +555,11 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
             ...call,
             status: "done",
             sources: event.sources ?? [],
-            ...(Array.isArray(event.providers) && event.providers.length
-              ? { providers: event.providers.filter((p): p is string => typeof p === "string").slice(0, 12) }
-              : {}),
+            ...telemOf(event.telem),
             ...(event.crossref ? { crossref: event.crossref } : {}),
             ...(subagents ? { subagents } : {}),
           }
-        : { ...call, status: "error" },
+        : { ...call, status: "error", ...telemOf(event.telem) },
   );
 }
 

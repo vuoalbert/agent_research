@@ -11,7 +11,9 @@ import {
   type TelemEmphasis,
   type TelemLineage,
   type TelemPlatform,
+  TelemCallError,
 } from "@/server/telem/client";
+import type { TelemCallMeta } from "@/server/telem/events";
 
 /**
  * Web search and page reading for /api/chat, both through Telem
@@ -48,11 +50,13 @@ const MAX_PINNED_PROVIDERS = 6;
 export type Source = { title: string; url: string };
 
 /** what a row reports. `name` is "Telem" now; chats saved earlier have "Tavily" rows */
+/** a Telem row's call summary, from its TelemCallMeta: shown only in the row's hover title */
+export type TelemRowMeta = { providers: string[]; latencyMs: number };
+
 export type ToolActivity =
   | { id: string; name: typeof TELEM_ROW; action?: "read"; query: string; status: "running" }
-  /** `providers`: who answered, for the row's hover title only */
-  | { id: string; status: "done"; sources: Source[]; providers?: string[] }
-  | { id: string; status: "error"; message: string };
+  | { id: string; status: "done"; sources: Source[]; telem?: TelemRowMeta }
+  | { id: string; status: "error"; message: string; telem?: TelemRowMeta };
 
 /** a page's host without `www.`, for the read row's label */
 export function hostOf(url: string): string {
@@ -69,6 +73,15 @@ const text = (value: string, isError = false) => ({
 });
 
 const unique = (values: readonly string[]) => [...new Set(values.filter(Boolean))];
+
+/** the providers that answered (a search's with results, a fetch's that returned the page) and the call's time */
+export function rowMeta(meta: TelemCallMeta): TelemRowMeta {
+  return {
+    providers: unique(meta.providers.filter((p) => p.results > 0).map((p) => p.provider)),
+    latencyMs: meta.latencyMs,
+  };
+}
+const errorMeta = (error: unknown) => (error instanceof TelemCallError ? { telem: rowMeta(error.meta) } : {});
 
 /** a page's text as a search (excerpt) or a read (full) returned it */
 export type PageSeen = { url: string; title: string; text: string; full: boolean };
@@ -139,7 +152,7 @@ export function createWebServer(
               id,
               status: "done",
               sources: results.map(({ title, url }) => ({ title, url })),
-              providers: unique(meta.providers.filter((p) => p.results > 0).map((p) => p.provider)),
+              telem: rowMeta(meta),
             });
             if (results.length === 0) return text(`No results for "${query}".`);
             return text(
@@ -154,7 +167,7 @@ export function createWebServer(
             );
           } catch (error) {
             const message = error instanceof Error ? error.message : `Web search failed: ${String(error)}`;
-            onActivity({ id, status: "error", message });
+            onActivity({ id, status: "error", message, ...errorMeta(error) });
             return text(message, true);
           }
         },
@@ -177,13 +190,13 @@ export function createWebServer(
           const hosts = unique(urls.map(hostOf)).join(", ");
           onActivity({ id, name: TELEM_ROW, action: "read", query: hosts, status: "running" });
           try {
-            const { pages, failed } = await telemFetch(urls, { lineage, ...(goal ? { goal } : {}), signal });
+            const { pages, failed, meta } = await telemFetch(urls, { lineage, ...(goal ? { goal } : {}), signal });
             onPages?.(pages.map((p) => ({ url: p.url, title: p.title, text: p.text, full: true })));
             onActivity({
               id,
               status: "done",
               sources: pages.map(({ title, url }) => ({ title, url })),
-              providers: unique(pages.map((p) => p.provider)),
+              telem: rowMeta(meta),
             });
             const read = pages.map((page, i) => {
               const truncated = page.text.length > PAGE_CHARS;
@@ -199,7 +212,7 @@ export function createWebServer(
             return text([...read, ...errors].join("\n\n"));
           } catch (error) {
             const message = error instanceof Error ? error.message : `Reading pages failed: ${String(error)}`;
-            onActivity({ id, status: "error", message });
+            onActivity({ id, status: "error", message, ...errorMeta(error) });
             return text(message, true);
           }
         },

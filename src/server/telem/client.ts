@@ -22,6 +22,7 @@ import { emitTelemCall, type TelemCallMeta, type TelemCaller, type TelemProvider
  * STABLE API (other features build on it — add, don't break):
  *   telemSearch(query, options?)  → { results: TelemSearchResult[], meta }
  *   telemFetch(urls, options?)    → { pages: TelemPage[], failed: TelemFetchFailure[], meta }
+ *   (a failed call throws TelemCallError, whose `.meta` is the call's TelemCallMeta)
  *   createLineage({ chatId?, turnId?, question? }) → TelemLineage   one chat turn
  *   childLineage(parent, { agentId, title, task }) → TelemLineage   a subagent of that turn
  *   PLATFORMS / platformProviders(platform)          pinnable platform providers
@@ -347,6 +348,17 @@ function logCall(meta: TelemCallMeta) {
   );
 }
 
+/** what `telemSearch` / `telemFetch` throw when the call failed (fallback included): the error carries the call's meta */
+export class TelemCallError extends Error {
+  constructor(
+    message: string,
+    readonly meta: TelemCallMeta,
+  ) {
+    super(message);
+    this.name = "TelemCallError";
+  }
+}
+
 /* ------------------------------------------------------------------ search */
 
 export type TelemSearchOptions = {
@@ -461,8 +473,8 @@ export async function telemSearch(query: string, options: TelemSearchOptions = {
   // Telem failed: Tavily, if it is configured, keeps the research going
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (!tavilyKey) {
-    settle({ status: "error", providers: [], resultCount: 0, error: telemFailure });
-    throw new Error(`Telem search failed: ${telemFailure}`);
+    const failedMeta = settle({ status: "error", providers: [], resultCount: 0, error: telemFailure });
+    throw new TelemCallError(`Telem search failed: ${telemFailure}`, failedMeta);
   }
   console.warn(`[telem] search failed (${telemFailure}); falling back to Tavily for "${query.slice(0, 80)}"`);
   const t0 = Date.now();
@@ -490,8 +502,8 @@ export async function telemSearch(query: string, options: TelemSearchOptions = {
     return { results, meta };
   } catch (fallbackError) {
     const message = `${telemFailure}; Tavily fallback: ${errorText(fallbackError)}`;
-    settle({ status: "error", providers: [], resultCount: 0, fallback: "tavily", error: message });
-    throw new Error(`Web search failed: ${message}`);
+    const failedMeta = settle({ status: "error", providers: [], resultCount: 0, fallback: "tavily", error: message });
+    throw new TelemCallError(`Web search failed: ${message}`, failedMeta);
   }
 }
 
@@ -601,8 +613,8 @@ export async function telemFetch(urls: readonly string[], options: TelemFetchOpt
 
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (!tavilyKey) {
-    settle({ status: "error", providers: [], resultCount: 0, error: telemFailure });
-    throw new Error(`Telem fetch failed: ${telemFailure}`);
+    const failedMeta = settle({ status: "error", providers: [], resultCount: 0, error: telemFailure });
+    throw new TelemCallError(`Telem fetch failed: ${telemFailure}`, failedMeta);
   }
   console.warn(`[telem] fetch failed (${telemFailure}); falling back to Tavily Extract for ${list.length} page(s)`);
   const t0 = Date.now();
@@ -623,7 +635,7 @@ export async function telemFetch(urls: readonly string[], options: TelemFetchOpt
     return { pages, failed, meta };
   } catch (fallbackError) {
     const message = `${telemFailure}; Tavily fallback: ${errorText(fallbackError)}`;
-    settle({ status: "error", providers: [], resultCount: 0, fallback: "tavily", error: message });
-    throw new Error(`Reading pages failed: ${message}`);
+    const failedMeta = settle({ status: "error", providers: [], resultCount: 0, fallback: "tavily", error: message });
+    throw new TelemCallError(`Reading pages failed: ${message}`, failedMeta);
   }
 }

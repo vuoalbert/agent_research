@@ -17,7 +17,7 @@ describe("AiThread — Telem rows", () => {
       id: "s",
       status: "done",
       sources: [{ title: "A", url: "https://a.com" }, { title: "B", url: "https://b.com" }],
-      providers: ["exa", "brave"],
+      telem: { providers: ["exa", "brave"], latencyMs: 1432 },
     });
     tools = applyToolEvent(tools, { id: "r", name: "Telem", action: "read", query: "worldlabs.ai, techcrunch.com", status: "running" });
     const { container } = render(<AiThread messages={messages(tools)} />);
@@ -26,7 +26,7 @@ describe("AiThread — Telem rows", () => {
       "TelemWorld Labs Marble",
       "Telem·Reading worldlabs.ai, techcrunch.com",
     ]);
-    expect(rows[0].title).toBe("Telem · exa, brave");
+    expect(rows[0].title).toBe("Telem · exa, brave · 1.4 s");
     expect(rows[1].title).toBe("");
     for (const row of rows) {
       const icon = row.querySelector("svg")!;
@@ -36,6 +36,20 @@ describe("AiThread — Telem rows", () => {
       // no counts anywhere on the row
       expect(row.textContent).not.toMatch(/\d+ (sources|results)/);
     }
+  });
+
+  it("keeps the call's providers and time on an error frame too, and drops a malformed one", () => {
+    let tools = applyToolEvent(undefined, { id: "s", name: "Telem", query: "q", status: "running" });
+    tools = applyToolEvent(tools, { id: "s", status: "error", telem: { providers: [], latencyMs: 820 } });
+    expect(tools[0]).toMatchObject({ status: "error", telem: { providers: [], latencyMs: 820 } });
+    const bad = applyToolEvent(applyToolEvent(undefined, { id: "b", name: "Telem", query: "q", status: "running" }), {
+      id: "b",
+      status: "done",
+      telem: { providers: "exa" },
+    });
+    expect(bad[0]).not.toHaveProperty("telem");
+    const { container } = render(<AiThread messages={messages(tools)} />);
+    expect(container.querySelector<HTMLElement>('[data-ai="tool"]')!.title).toBe("Telem · 820 ms");
   });
 
   it("renders a saved chat's Tavily rows as before", () => {

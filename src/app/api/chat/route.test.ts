@@ -197,7 +197,7 @@ describe("POST /api/chat", () => {
         { title: "Minecraft sales", url: "https://www.minecraft.net/en-us/article/sales" },
         { title: "https://en.wikipedia.org/wiki/Minecraft", url: "https://en.wikipedia.org/wiki/Minecraft" },
       ],
-      providers: ["exa", "jina"],
+      telem: { providers: ["exa", "jina"], latencyMs: expect.any(Number) },
     });
     expect(toolText).toContain("[1] Minecraft sales\nURL: https://www.minecraft.net/en-us/article/sales\n300 million copies.");
     expect(toolText).toContain("x".repeat(6000));
@@ -267,7 +267,7 @@ describe("POST /api/chat", () => {
         { title: "Marble", url: "https://www.worldlabs.ai/blog/marble" },
         { title: "https://example.com/x", url: "https://example.com/x" },
       ],
-      providers: ["exa", "brave"],
+      telem: { providers: ["exa", "brave"], latencyMs: expect.any(Number) },
     });
     // in order: the text before the search, the search, the answer after it
     expect(body.indexOf("Let me look.")).toBeLessThan(body.indexOf("event: tool"));

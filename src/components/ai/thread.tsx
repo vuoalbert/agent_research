@@ -206,6 +206,12 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
  * hosts for a page read — cut to one line. It pulses while the call runs.
  * A deploy_subagents group is a block of its own, holding its subagents' calls.
  */
+/** a Telem row's hover title: who answered and how long it took (never on the row itself) */
+function telemTitle({ providers, latencyMs }: NonNullable<ToolCall["telem"]>): string {
+  const time = latencyMs >= 1000 ? `${(latencyMs / 1000).toFixed(1)} s` : `${Math.round(latencyMs)} ms`;
+  return ["Telem", providers.join(", "), time].filter(Boolean).join(" · ");
+}
+
 function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCall[] }) {
   // a figure job: a box, and it follows the job rather than the call
   if (call.action === "visualize" || call.action === "visualize-message") return <VisualizeToolRow call={call} />;
@@ -227,7 +233,7 @@ function ToolRow({ call, calls = [] }: { call: ToolCall; calls?: readonly ToolCa
       data-ai="tool"
       data-action={call.action ?? "search"}
       data-status={call.status}
-      title={telem && call.providers?.length ? `Telem · ${call.providers.join(", ")}` : undefined}
+      title={telem && call.telem ? telemTitle(call.telem) : undefined}
       className={cn(
         "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",
         call.status === "running" && "motion-safe:animate-pulse",
