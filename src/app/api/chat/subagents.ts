@@ -1,4 +1,4 @@
-import { query, tool } from "@anthropic-ai/claude-agent-sdk";
+import { query, tool, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
 import { shapeAt, type Subagent } from "@/lib/subagents";
@@ -200,8 +200,11 @@ export function createSubagentsTool({
   concurrency = SUBAGENT_CONCURRENCY,
   vaultDir,
   lineage,
+  onRunResult,
 }: {
   onActivity: (activity: SubagentsActivity) => void;
+  /** each subagent's SDK `result` message, for usage telemetry (src/server/telem/usage.ts) */
+  onRunResult?: (result: Extract<SDKMessage, { type: "result" }>, sub: { id: string; title: string }) => void;
   /** every page a subagent's search or read returned, like the chat's own */
   onPages?: (pages: PageSeen[]) => void;
   /** the request's: Stop ends every subagent */
@@ -329,6 +332,7 @@ export function createSubagentsTool({
               const words = blockText((message as { message?: { content?: unknown } }).message?.content);
               if (words.trim()) said.push(words);
             } else if (message.type === "result") {
+              onRunResult?.(message, { id: row.id, title: sub.title });
               if (message.subtype === "success") result = message.result;
               else stopped = message.subtype;
             }

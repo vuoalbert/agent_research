@@ -9,6 +9,8 @@ process.env.VAULT_DIR = mkdtempSync(join(tmpdir(), "agent-research-vault-"));
 // no World Labs worlds unless a test injects its own service (src/server/worlds/service.ts)
 process.env.WORLDS_DISABLED = "1";
 process.env.WORLDS_DIR = mkdtempSync(join(tmpdir(), "agent-research-worlds-"));
+// … and records its usage (src/server/telem/usage.ts): never into the repo's /.telem either
+process.env.TELEM_USAGE_DIR = mkdtempSync(join(tmpdir(), "agent-research-usage-"));
 
 /**
  * Sample conversations for the AI tests. The app itself starts with no chats;

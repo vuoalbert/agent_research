@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 import { createLineage } from "@/server/telem/client";
+import { recordClaudeResult, recordJob } from "@/server/telem/usage";
 import { createTurnRecorder } from "@/server/vault/turn";
 
 import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
@@ -164,6 +165,17 @@ export async function POST(request: Request) {
       // what this turn's research found, for the vault once the turn is over
       const turn = createTurnRecorder({ chatId, question: turns[turns.length - 1].content, knownSources: chatSources });
       let answer = "";
+      // usage telemetry (src/server/telem/usage.ts): this turn's place in the chat, and its jobs
+      const turnIndex = turns.filter((t) => t.role === "user").length;
+      const jobsSeen = new Set<string>();
+      const noteJob = (activity: unknown) => {
+        const job = activity as { id?: unknown; action?: string; jobId?: unknown; status?: string };
+        const jobId = job.action === "world" && job.status === "running" ? job.id : job.jobId;
+        if ((job.action === "visualize" || job.action === "world") && typeof jobId === "string" && !jobsSeen.has(jobId)) {
+          jobsSeen.add(jobId);
+          recordJob(chatId, job.action, jobId, turnIndex);
+        }
+      };
       // a chat's first research turn starts its World Labs world (world-turn.ts)
       const researchTools = [WEB_SEARCH_TOOL_ID, WEB_READ_TOOL_ID, CROSSREF_TOOL_ID, SUBAGENTS_TOOL_ID];
       const world = createWorldTurn({
@@ -171,12 +183,14 @@ export async function POST(request: Request) {
         researchTools,
         knownSources: chatSources,
         onActivity: (activity) => {
+          noteJob(activity);
           if (!abort.signal.aborted) send(controller, "tool", activity);
         },
       });
       const report = (activity: unknown) => {
         turn.recordActivity(activity);
         world.recordActivity(activity);
+        noteJob(activity);
         if (!abort.signal.aborted) send(controller, "tool", activity);
       };
       // the sources cross_reference checks: the chat's, then this request's finds
@@ -223,7 +237,15 @@ export async function POST(request: Request) {
                 tools: [
                   createCrossReferenceTool({ log, onActivity: report, signal: abort.signal, lineage }),
                   ...createVaultTools({ onActivity: report }),
-                  createSubagentsTool({ onActivity: report, onPages, signal: abort.signal, question, lineage }),
+                  createSubagentsTool({
+                    onActivity: report,
+                    onPages,
+                    signal: abort.signal,
+                    question,
+                    lineage,
+                    onRunResult: (result, sub) =>
+                      recordClaudeResult(result, { chatId, agent: sub.id, title: sub.title, turn: turnIndex }),
+                  }),
                 ],
               }),
               [VISUALIZE_SERVER]: visualize.server,
@@ -271,7 +293,10 @@ export async function POST(request: Request) {
               sentText = true;
               breakBeforeNext = false;
             }
-          } else if (message.type === "result" && message.subtype !== "success") {
+          } else if (message.type === "result") {
+            recordClaudeResult(message, { chatId, agent: "main", turn: turnIndex });
+          }
+          if (message.type === "result" && message.subtype !== "success") {
             send(controller, "error", { message: `Agent Research stopped: ${message.subtype}` });
             controller.close();
             return;
