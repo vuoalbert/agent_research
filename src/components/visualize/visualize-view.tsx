@@ -35,8 +35,8 @@ import { useCurrentVisualization, useNow } from "./use-jobs";
  *
  * The chat can message the agent (message_visualize): its messages show in
  * the progress log, a finished figure that was picked back up shows its
- * progress again until the updated page is ready, and the agent's last reply
- * (what it changed) sits in the header, after the time.
+ * progress again until the updated page is ready. The header shows only the
+ * time: the agent's reply (what it changed) goes back to the chat, not here.
  *
  * It is polled every few seconds while the page is open. The header leaves
  * room on the left for FullTabView's Back button, which sits over it.
@@ -117,16 +117,6 @@ function CurrentVisualization({
           <span data-elapsed="" className="shrink-0 text-[13px] text-plane-muted tabular-nums">
             {formatElapsed(elapsed)}
           </span>
-        )}
-        {/* the agent's answer to the chat's last message: one line, all of it on hover */}
-        {job.lastReply && (
-          <p
-            data-last-reply=""
-            title={job.lastReply}
-            className="pointer-events-auto min-w-0 truncate text-[13px] text-plane-muted"
-          >
-            <span className="font-medium text-plane-ink-2">Agent:</span> {job.lastReply}
-          </p>
         )}
         {active && (
           <Button variant="outline" size="sm" onClick={stop} disabled={stopping} className="ml-auto text-plane-ink-2">

@@ -338,12 +338,12 @@ describe("messages to the Visualize agent", () => {
     expect(row.querySelector("svg.lucide-box")).not.toBeNull();
   });
 
-  it("shows the agent's last reply under the title", async () => {
+  it("keeps the header to the time: the agent's last reply does not show there", async () => {
     current = job("done", { figure: "figure.html", lastReply: "Made the dome blue and labelled the striker." });
     const { container } = render(<VisualizeView />);
     await flush();
-    const reply = container.querySelector("[data-last-reply]") as HTMLElement;
-    expect(reply.textContent).toBe("Agent: Made the dome blue and labelled the striker.");
+    expect(container.querySelector("[data-last-reply]")).toBeNull();
+    expect(container.querySelector("header")?.textContent).not.toContain("Made the dome blue");
     expect(container.querySelector("iframe")).not.toBeNull();
   });
 
@@ -368,6 +368,6 @@ describe("messages to the Visualize agent", () => {
     current = job("done", { figure: "figure.html", lastReply: "Added the caption." });
     await flush(3000);
     expect(container.querySelector("iframe")).not.toBeNull();
-    expect(container.querySelector("[data-last-reply]")?.textContent).toBe("Agent: Added the caption.");
+    expect(container.querySelector("[data-last-reply]")).toBeNull();
   });
 });
