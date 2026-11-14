@@ -97,11 +97,25 @@ describe("the agent's options", () => {
     expect(prompt).toContain('window.addEventListener("ar:explode"');
     expect(prompt).toMatch(/e\.detail\.exploded/);
     expect(prompt).toMatch(/prefers-reduced-motion/);
-    expect(prompt).toMatch(/Don't draw your own explode button or parts list/);
+    expect(prompt).toMatch(/Don't draw your own buttons or parts list/);
     // the card fills the window: its hint and readout stay, nothing below it
     expect(prompt).toMatch(/keep its corner texts \(title, the interaction hint and the live readout\)/);
     expect(prompt).toMatch(/no legend keys, no caption, no explanatory paragraph/);
-    expect(prompt).toMatch(/pan\/zoom/);
+    expect(prompt).toMatch(/wheel zoom and drag-to-orbit/);
+  });
+
+  it("builds in 3D for orbit, with the quick checks only and a 2D fallback", () => {
+    const prompt = jobPrompt(job, paths, studio);
+    expect(prompt).toMatch(/3D Figure the reader can orbit/);
+    expect(prompt).toMatch(/ONE `turn` group named "orbit"/);
+    expect(prompt).toContain("`data-ar-orbit`");
+    expect(prompt).toContain("`ar:orbit`");
+    expect(prompt).toContain("`ar:reset-view`");
+    expect(prompt).toMatch(/never wrap them/);
+    expect(prompt).toContain("`data-ar-no-explode`");
+    expect(prompt).toMatch(/never run it, nor turn-check --pops, --order or --perf/);
+    expect(prompt).toMatch(/--audit --quick/);
+    expect(prompt).toMatch(/Fallback: .* 2D Figure/);
   });
 });
 

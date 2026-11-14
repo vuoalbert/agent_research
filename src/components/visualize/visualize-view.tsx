@@ -23,9 +23,12 @@ import { useCurrentVisualization, useNow } from "./use-jobs";
  *
  *   - while it builds: its subject, status and elapsed time, the agent's latest
  *     progress lines, and Stop;
- *   - once it is done: the figure itself, filling the page, in an iframe that
- *     may run its own script and nothing else (`sandbox="allow-scripts"`, no
- *     same-origin; the route adds a CSP with no network);
+ *   - once it is done: the figure itself, filling the whole view from the very
+ *     top, in an iframe that may run its own script and nothing else
+ *     (`sandbox="allow-scripts"`, no same-origin; the route adds a CSP with no
+ *     network). The header floats over it on no background, and the iframe
+ *     fades in under the header instead of starting at a hard edge, so a
+ *     zoomed or panned drawing slides under the title;
  *   - failed, stopped or interrupted: why, and what it got to;
  *   - before the first: "Ask Claude to visualize something".
  *
@@ -83,14 +86,22 @@ function CurrentVisualization({
     }
   };
 
+  const figure = Boolean(job.figure);
+
   return (
     <section
       data-visualize={job.status}
       aria-label={job.subject}
-      className={cn("flex flex-col bg-plane-pane", className)}
+      className={cn("relative flex flex-col", figure ? "bg-white" : "bg-plane-pane", className)}
     >
-      {/* pl leaves the Back button (16px in, ~72px wide) its corner */}
-      <header className="flex h-[60px] shrink-0 items-center gap-3 pr-5 pl-[104px]">
+      {/* pl leaves the Back button (16px in, ~72px wide) its corner; over a figure
+          it floats on no background and lets the pointer through to the figure */}
+      <header
+        className={cn(
+          "flex h-[60px] shrink-0 items-center gap-3 pr-5 pl-[104px]",
+          figure && "pointer-events-none absolute inset-x-0 top-0 z-10 [&_button]:pointer-events-auto",
+        )}
+      >
         {/* only the time shows here; the subject stays as the region's label */}
         <h2 className="sr-only">{job.subject}</h2>
         {/* no chip once it is done: the finished figure says that itself */}
@@ -108,21 +119,22 @@ function CurrentVisualization({
         )}
       </header>
 
-      {job.figure ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          {message && (
-            <p className="flex h-10 shrink-0 items-center border-b border-plane-border bg-plane-band px-5 text-[12px] text-plane-muted">
-              {message}
-            </p>
-          )}
+      {figure ? (
+        <>
           <iframe
             title={job.subject}
             src={figureEndpoint(job.id)}
             sandbox="allow-scripts"
             referrerPolicy="no-referrer"
-            className="block min-h-0 w-full flex-1 border-0 bg-white"
+            data-figure=""
+            className="absolute inset-0 block size-full border-0 bg-white [mask-image:linear-gradient(to_bottom,transparent_0,rgb(0_0_0/.35)_28px,#000_64px)]"
           />
-        </div>
+          {message && (
+            <p className="pointer-events-none absolute inset-x-0 top-[52px] z-10 px-5 text-[12px] leading-5 text-plane-muted">
+              {message}
+            </p>
+          )}
+        </>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-5 pt-4 pb-5">
           {active ? (

@@ -231,7 +231,7 @@ describe("the Visualize view", () => {
     expect(container.textContent).toContain("Stopped before it finished.");
   });
 
-  it("shows a finished figure in a script-only sandboxed iframe filling the page", async () => {
+  it("shows a finished figure in a script-only sandboxed iframe filling the whole view", async () => {
     current = job("done", { figure: "figure.html" });
     const { container } = render(<VisualizeView />);
     await flush();
@@ -240,7 +240,12 @@ describe("the Visualize view", () => {
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     expect(frame.getAttribute("src")).toBe(`/api/visualize/jobs/${ID}/figure`);
     expect(frame.getAttribute("title")).toBe("a dial indicator gauge");
-    expect(frame.className).toContain("flex-1");
+    // it fills the whole view from the very top, the header floating over it with no background
+    expect(frame.className).toContain("absolute inset-0");
+    expect(frame.className).toContain("mask-image");
+    const header = container.querySelector("header") as HTMLElement;
+    expect(header.className).toContain("absolute");
+    expect(header.className).not.toMatch(/\bbg-|border-b/);
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
   });
 

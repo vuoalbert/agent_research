@@ -159,6 +159,70 @@ describe("the figure chrome in the page", () => {
     expect(view.get()).toEqual({ scale: 1, x: 0, y: 0 });
   });
 
+  it("keeps the controls on the right with the Parts panel, nothing on the left", () => {
+    const { doc } = load(PAGE);
+    const side = doc.querySelector(".ar-side")!;
+    expect(side.querySelector(".ar-bar .ar-expand")).not.toBeNull();
+    expect(side.querySelector(".ar-bar .ar-reset")).not.toBeNull();
+    expect(side.querySelector(".ar-parts")).not.toBeNull();
+    expect(FIGURE_CHROME_STYLE).toMatch(/\.ar-side\{position:fixed;top:var\(--ar-head\);right:16px;/);
+    expect(FIGURE_CHROME_STYLE).not.toMatch(/left:16px;z-index/);
+  });
+
+  it("orbits a 3D figure on a drag: ar:orbit for the figure, the kit's own hook when it doesn't answer", async () => {
+    const page3d = PAGE.replace('<svg viewBox="0 0 100 100">', '<div class="iso-stage iso-turn" data-ar-orbit><svg viewBox="0 0 100 100">').replace("</svg></div></figure>", "</svg></div></div></figure>");
+    const turned: number[] = [];
+    (window as unknown as Record<string, unknown>).__isoTurn = { set: (value: number) => turned.push(value) };
+    const { win, doc } = load(page3d);
+    const plate = doc.querySelector(".iso-plate")!;
+    const view = (win as unknown as { __arView: { get(): Record<string, number> } }).__arView;
+    expect(doc.documentElement.hasAttribute("data-ar-orbit-view")).toBe(true);
+    const drag = (from: number, to: number, extra: PointerEventInit = {}) => {
+      plate.dispatchEvent(new win.PointerEvent("pointerdown", { bubbles: true, pointerId: 1, isPrimary: true, button: 0, clientX: from, clientY: 50, ...extra }));
+      win.dispatchEvent(new win.PointerEvent("pointermove", { pointerId: 1, isPrimary: true, clientX: from + 2, clientY: 50, ...extra }));
+      win.dispatchEvent(new win.PointerEvent("pointermove", { pointerId: 1, isPrimary: true, clientX: to, clientY: 50, ...extra }));
+      win.dispatchEvent(new win.PointerEvent("pointerup", { pointerId: 1, isPrimary: true, clientX: to, clientY: 50, ...extra }));
+    };
+
+    // the figure answers ar:orbit: it gets the yaw, the kit hook is left alone
+    const yaws: number[] = [];
+    const answer = (event: Event) => {
+      event.preventDefault();
+      yaws.push((event as CustomEvent<{ yaw: number }>).detail.yaw);
+    };
+    win.addEventListener("ar:orbit", answer);
+    drag(100, 200);
+    expect(yaws.reduce((a, b) => a + b, 0)).toBeCloseTo(40, 5); // 0.4 degrees a pixel
+    expect(turned).toEqual([]);
+    expect(view.get().yaw).toBeCloseTo(40, 5);
+    expect(view.get().x).toBe(0); // an orbit is not a pan
+    win.removeEventListener("ar:orbit", answer);
+
+    // a figure that doesn't answer is turned through window.__isoTurn
+    drag(200, 150);
+    expect(turned.at(-1)).toBeCloseTo(-20, 5);
+
+    // shift-drag pans instead
+    drag(100, 130, { shiftKey: true });
+    expect(view.get().x).toBe(30);
+
+    // reset turns it back and tells the figure (a click right after a drag is the drag's own, so wait a tick)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let resets = 0;
+    win.addEventListener("ar:reset-view", () => resets++);
+    doc.querySelector<HTMLButtonElement>(".ar-reset")!.click();
+    expect(resets).toBe(1);
+    expect(turned.at(-1)).toBe(0);
+    expect(view.get()).toEqual({ scale: 1, x: 0, y: 0, yaw: 0 });
+    delete (window as unknown as Record<string, unknown>).__isoTurn;
+  });
+
+  it("hides Expand on a figure that says it can't come apart", () => {
+    const { doc } = load(PAGE.replace('<svg viewBox="0 0 100 100">', '<svg viewBox="0 0 100 100" data-ar-no-explode>'));
+    expect(doc.querySelector(".ar-parts")).not.toBeNull();
+    expect(doc.querySelector(".ar-expand")).toBeNull();
+  });
+
   it("adds no Expand button or panel when the figure has no marked parts, and runs once", () => {
     const bare = PAGE.replace(/ data-part-info="[^"]*"/g, "");
     const { doc } = load(bare);
