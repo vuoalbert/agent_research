@@ -1,5 +1,6 @@
 import { AppTransition } from "@/components/app-transition";
 import { IconRail } from "@/components/icon-rail";
+import { SideTabs } from "@/components/side-tabs";
 import { Sidebar } from "@/components/sidebar";
 import { TopBar } from "@/components/top-bar";
 import type { View } from "@/lib/navigation";
@@ -16,9 +17,11 @@ import type { ReactNode } from "react";
  *   top bar   y 0..40, full width, bg --plane-page, NO bottom border of its own
  *   icon rail x 0..60, flat page bg, NO border of its own
  *   sidebar   card spans x 60..310 (pulled -1px into the rail column)
- *   content   x 310..1432, y 40..892 — an inset card that draws all four of
- *             its own borders with an 8px radius; the 8px right / 8px bottom
- *             gutter below and beside it is page bg (8px on both edges).
+ *   content   x 310..1404, y 40..892 — an inset card that draws all four of
+ *             its own borders with an 8px radius; the gutter below it is 8px
+ *             of page bg, the one beside it 36px: the side tabs reach 28px
+ *             out of the card's right edge, and 8px of page bg stays past them.
+ *             (The reference PNG predates the tabs: it has the card at x 1432.)
  *
  * Edge ownership — verified against the PNG by the region agents, and the
  * reason the capture shows exactly 1px at every seam, never 2 and never 0:
@@ -31,7 +34,9 @@ import type { ReactNode } from "react";
  *   - The sidebar card is rounded on its LEFT corners only; its right corners
  *     are square and it draws no border-r. The line at x=310 is the content
  *     card's LEFT border.
- *   - The line at y=40 over x 310..1432 is the content card's own top border.
+ *   - The line at y=40 over x 310..1404 is the content card's own top border.
+ *   - The side tabs (src/components/side-tabs.tsx) start one pixel inside the
+ *     card, over its right border, and paint that border out along each joint.
  * All six seams and all four corners measure 0 diff pixels; see scripts/seams.mjs.
  *
  * No fixed 1440x900 frame: the grid fills the viewport, so a Playwright
@@ -53,12 +58,16 @@ export function Shell({ view, content }: { view: View; content: ReactNode }) {
         {/* the sidebar animates its own body, keyed by app */}
         <Sidebar view={view} />
       </div>
-      <div className="col-start-3 row-start-2 min-h-0 min-w-0 pr-2 pb-2">
+      <div className="relative col-start-3 row-start-2 min-h-0 min-w-0 pr-9 pb-2">
         {/* the pane swaps on any route change, not just an app change: the
             breadcrumb and the body below it belong to the same route */}
         <AppTransition id={routeKey} scope="pane" className="h-full">
           {content}
         </AppTransition>
+        {/* 36px gutter = 28px of tab + 8px of page bg, so `right-2` puts the
+            stack's left edge one pixel inside the card, on its border. Top 16px
+            and bottom 16px keep every flare off the card's 8px corners. */}
+        <SideTabs className="absolute top-4 right-2 bottom-4" />
       </div>
     </div>
   );
