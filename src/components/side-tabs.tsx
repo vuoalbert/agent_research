@@ -30,13 +30,13 @@ import { cn } from "@/lib/utils";
  */
 
 /** how far a tab reaches into the card past the inner edge of its border, in px */
-export const SIDE_TAB_REACH = 40;
+export const SIDE_TAB_REACH = 34;
 /** the tab's body, end to end along the card edge (flares not included) */
-const LENGTH = 148;
+const LENGTH = 200;
 /** radius of the two rounded inner corners */
-const END = 14;
+const END = 8;
 /** radius of the two concave flares where the tab meets the card border */
-const FLARE = 10;
+const FLARE = 8;
 /** how many handles */
 const COUNT = 4;
 
