@@ -83,7 +83,7 @@ export const CONNECTORS = [
 ] as const;
 
 /** The one project there is. */
-export const PROJECTS = ["How Starline works"] as const;
+export const PROJECTS = ["How Agent Research works"] as const;
 
 function Glyph({ icon: Icon }: { icon: LucideIcon }) {
   return (

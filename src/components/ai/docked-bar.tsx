@@ -20,7 +20,7 @@ import { DOCK_COLUMN, DOCK_SWAP } from "@/components/ai/tokens";
 import { cn } from "@/lib/utils";
 
 /** What a pane with no model behind it owes the reader. */
-export const DISCLOSURE = "Starline is AI and can make mistakes.";
+export const DISCLOSURE = "Agent Research is AI and can make mistakes.";
 
 export function AiDockedFootnote({
   transition = DOCK_SWAP,

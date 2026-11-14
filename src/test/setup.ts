@@ -10,7 +10,7 @@ export const SAMPLE_CHATS: SeedChat[] = [
     title: "Hey",
     messages: [
       ["user", "Hey"],
-      ["assistant", "Hey! I'm Starline. Ask me anything — or start with one of your projects."],
+      ["assistant", "Hey! I'm Agent Research. Ask me anything — or start with one of your projects."],
     ],
   },
   {

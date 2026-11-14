@@ -1,12 +1,9 @@
 /**
- * The Starline ribbon mark — a flat ribbon folded twice so it reads as a
- * slanted "N". Traced off `brand/reference.png` by `scripts/logo-trace.mjs`;
+ * The Agent Research ribbon mark — a flat ribbon folded twice so it reads as a
+ * slanted "N". Traced off `brand/reference.png`;
  * every coordinate below is in that raster's 1536x1024 frame, so the numbers
  * line up 1:1 with `brand/LOGO-SPEC.md` (§2 edges, §3 arcs). Regenerate the
- * paths from the tracer rather than editing them by hand.
- *
- * Sibling files `mark-a/b/c.tsx` are the earlier monoline starline sketches
- * and are untouched.
+ * paths from a tracer rather than editing them by hand.
  */
 
 /** the mark's ink box in reference coordinates — LOGO-SPEC.md §1 */

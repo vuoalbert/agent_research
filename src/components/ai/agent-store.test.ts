@@ -175,13 +175,13 @@ describe("agent store", () => {
 
     toggleChatPinned(first.id);
     toggleChatUnread(first.id);
-    setChatProject(first.id, "How Starline works");
+    setChatProject(first.id, "How Agent Research works");
     createChatGroup("Camp planning");
     setChatGroup(first.id, "Camp planning");
     expect(getAgentState().chats[0]).toMatchObject({
       pinned: true,
       unread: true,
-      project: "How Starline works",
+      project: "How Agent Research works",
       group: "Camp planning",
     });
     expect(getAgentState().groups).toEqual(["Camp planning"]);

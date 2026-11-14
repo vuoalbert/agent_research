@@ -156,7 +156,7 @@ describe("AiSidebar", () => {
     }
 
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Add to project" }), { key: "ArrowRight" });
-    expect(await screen.findByRole("menuitem", { name: "How Starline works" })).toBeTruthy();
+    expect(await screen.findByRole("menuitem", { name: "How Agent Research works" })).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Move to group" }), { key: "ArrowRight" });
     expect(await screen.findByText("No groups yet")).toBeTruthy();
@@ -305,7 +305,7 @@ describe("AiSidebar", () => {
 
   it("uses the two existing project rows as chat filters", async () => {
     renderApp();
-    for (const name of ["How Starline works"]) {
+    for (const name of ["How Agent Research works"]) {
       const row = screen.getByText(name).closest("button")!;
       expect(row.getAttribute("data-agent-nav")).toBe(name);
       expect(row.firstElementChild?.tagName).toBe("svg");
@@ -313,8 +313,8 @@ describe("AiSidebar", () => {
     }
 
     const chat = getAgentState().chats[0];
-    act(() => setChatProject(chat.id, "How Starline works"));
-    fireEvent.click(screen.getByText("How Starline works").closest("button")!);
+    act(() => setChatProject(chat.id, "How Agent Research works"));
+    fireEvent.click(screen.getByText("How Agent Research works").closest("button")!);
     expect(screen.getByRole("button", { name: "Clear project filter" })).toBeTruthy();
     await waitFor(() => expect(chatTitles()).toEqual([chat.title]));
     fireEvent.click(screen.getByRole("button", { name: "Clear project filter" }));

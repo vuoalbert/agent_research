@@ -187,8 +187,8 @@ export function AiComposer({
         // One line docked, two at home. Both grow to `maxRows` and then scroll.
         minRows={docked ? 1 : 2}
         maxRows={docked ? 4 : 6}
-        placeholder={docked ? "Write a message…" : "Ask Starline…"}
-        aria-label={docked ? "Write a message" : "Ask Starline"}
+        placeholder={docked ? "Write a message…" : "Ask Agent Research…"}
+        aria-label={docked ? "Write a message" : "Ask Agent Research"}
         /* `bg-white` is opaque on purpose: the mark's lower half is behind this
            box at home and must stay unreadable through it. The focus affordance
            is the panel's own hairline darkening by one grey step, because the

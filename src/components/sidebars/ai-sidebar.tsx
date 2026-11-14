@@ -52,8 +52,7 @@ import { cn } from "@/lib/utils";
 /**
  * AiSidebar — the body of the sidebar card on the `ai` app.
  *
- * It is copied from the Agent nav panel in the Starline app
- * (`frontend/src/components/starline/agent/nav.tsx`), re-cut to this clone's
+ * It is adapted from an Agent nav panel, re-cut to this app's
  * measured chrome: the 250px card, the 32px row pitch, 13px Inter, the
  * `--plane-*` ink, and shadcn Buttons for every control. Structure, glyphs and
  * copy are the reference's; not one number is.
@@ -74,7 +73,7 @@ import { cn } from "@/lib/utils";
  *   128.98       "New" button bottom — the New row
  *   143.83       Projects · Artifacts · Scheduled · Customize, h 32, pitch 32
  *   283.83       "PROJECTS" heading, h 24 — 11px caps, 0.07em, --plane-faint
- *   307.83       How Starline works
+ *   307.83       How Agent Research works
  *   383.83       "CHATS AND TASKS" heading
  *   407.83..843  chat rows — the only part of the column that can grow, so the
  *                only part that scrolls; it ends exactly on the divider, so
@@ -107,7 +106,7 @@ const TOOLS: { id: string; label: string; icon: LucideIcon }[] = [
 ];
 
 /** The two real project destinations already shown in this sidebar. */
-const PROJECTS = ["How Starline works"] as const;
+const PROJECTS = ["How Agent Research works"] as const;
 
 const MENU =
   "w-auto min-w-[210px] rounded-[10px] border border-plane-border bg-white p-1 text-[13px] shadow-[0_1px_2px_rgba(15,15,16,0.04),0_12px_32px_rgba(15,15,16,0.10)] ring-0";

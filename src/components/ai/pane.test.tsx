@@ -131,9 +131,9 @@ describe("AiPane", () => {
     }
   });
 
-  it("asks with Starline's own placeholder, over an empty header strip", () => {
+  it("asks with Agent Research's own placeholder, over an empty header strip", () => {
     pane();
-    expect(screen.getByPlaceholderText("Ask Starline…")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Ask Agent Research…")).toBeTruthy();
     const header = document.querySelector('[data-region="ai-header"]') as HTMLElement;
     expect(header.dataset.state).toBe("home");
     expect(header.textContent).toBe("");
@@ -153,7 +153,7 @@ describe("AiPane", () => {
     expect((bar.querySelector("form") as HTMLElement).style.borderRadius).toBe("16px");
     expect(screen.getByPlaceholderText("Write a message…")).toBeTruthy();
     expect(screen.getByLabelText("Voice input")).toBeTruthy();
-    expect(screen.getByText("Starline is AI and can make mistakes.")).toBeTruthy();
+    expect(screen.getByText("Agent Research is AI and can make mistakes.")).toBeTruthy();
 
     const header = document.querySelector('[data-region="ai-header"]') as HTMLElement;
     expect(header.dataset.state).toBe("chat");
@@ -291,7 +291,7 @@ describe("AiPane", () => {
       newChat();
     });
 
-    const field = (await screen.findByPlaceholderText("Ask Starline…")) as HTMLTextAreaElement;
+    const field = (await screen.findByPlaceholderText("Ask Agent Research…")) as HTMLTextAreaElement;
     expect(field.value).toBe("");
     // the strip empties, but the title animates out rather than vanishing, so
     // it is still mounted for the length of the exit
@@ -308,7 +308,7 @@ describe("AiPane", () => {
     const [use] = screen.getAllByRole("button", { name: /Use this prompt/i });
     fireEvent.click(use);
 
-    const field = screen.getByPlaceholderText("Ask Starline…") as HTMLTextAreaElement;
+    const field = screen.getByPlaceholderText("Ask Agent Research…") as HTMLTextAreaElement;
     expect(field.value).toContain("Research this topic");
     // filled, not sent
     expect(document.querySelector('[data-composer="docked"]')).toBeNull();

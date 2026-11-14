@@ -19,7 +19,7 @@ import { useCallback, useSyncExternalStore } from "react";
 export const STORAGE_KEY = "agent_research.agent.v1";
 
 /** what lands in the assistant turn when the route cannot be reached */
-export const ERROR_REPLY = "Couldn't reach Starline.";
+export const ERROR_REPLY = "Couldn't reach Agent Research.";
 
 /** where the streamed reply comes from */
 export const CHAT_ENDPOINT = "/api/chat";

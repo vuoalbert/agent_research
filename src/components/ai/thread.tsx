@@ -99,7 +99,7 @@ export function AiThread({
               <span
                 data-ai="pending"
                 role="status"
-                aria-label={streaming ? "Starline is replying" : undefined}
+                aria-label={streaming ? "Agent Research is replying" : undefined}
                 className="flex flex-col gap-2 px-1 py-2"
               >
                 {[220, 300, 160].map((width, i) => (

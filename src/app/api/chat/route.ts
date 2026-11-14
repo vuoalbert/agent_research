@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 /**
- * POST /api/chat — one turn of Starline, streamed.
+ * POST /api/chat — one turn of Agent Research, streamed.
  *
  * Runs on the **Node** runtime, not the edge: the Claude Agent SDK drives the
  * local Claude Code binary as a subprocess, so it needs `child_process` and the
@@ -29,7 +29,7 @@ export const dynamic = "force-dynamic";
 const MODEL = "claude-sonnet-5";
 const MAX_TURNS_OF_HISTORY = 30;
 const SYSTEM_PROMPT =
-  "You are Starline, an AI assistant. Be concise.";
+  "You are Agent Research, an AI assistant. Be concise.";
 
 type Turn = { role: "user" | "assistant"; content: string };
 
@@ -53,7 +53,7 @@ function buildPrompt(turns: Turn[]): string {
   if (earlier.length === 0) return question.content;
 
   const transcript = earlier
-    .map((turn) => `${turn.role === "user" ? "User" : "Starline"}: ${turn.content}`)
+    .map((turn) => `${turn.role === "user" ? "User" : "Agent Research"}: ${turn.content}`)
     .join("\n\n");
   return `Here is the conversation so far:\n\n${transcript}\n\nUser: ${question.content}`;
 }
@@ -114,7 +114,7 @@ export async function POST(request: Request) {
               send(controller, "delta", { text: event.delta.text });
             }
           } else if (message.type === "result" && message.subtype !== "success") {
-            send(controller, "error", { message: `Starline stopped: ${message.subtype}` });
+            send(controller, "error", { message: `Agent Research stopped: ${message.subtype}` });
             controller.close();
             return;
           }

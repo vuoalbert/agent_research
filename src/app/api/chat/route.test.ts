@@ -68,7 +68,7 @@ describe("POST /api/chat", () => {
     const { options, prompt } = query.mock.calls[0][0];
     expect(options.model).toBe("claude-sonnet-5");
     expect(options.systemPrompt).toBe(
-      "You are Starline, an AI assistant. Be concise.",
+      "You are Agent Research, an AI assistant. Be concise.",
     );
     expect(options.tools).toEqual([]);
     expect(options.settingSources).toEqual([]);
@@ -90,7 +90,7 @@ describe("POST /api/chat", () => {
     expect(prompt).not.toContain("turn 9"); // dropped: outside the last 30
     expect(prompt).toContain("turn 10"); // kept: the oldest of the 30
     expect(prompt).toContain("User: turn 10");
-    expect(prompt).toContain("Starline: turn 11");
+    expect(prompt).toContain("Agent Research: turn 11");
     // the newest turn is the question, not part of the transcript
     expect(prompt.trimEnd().endsWith("User: turn 39")).toBe(true);
   });

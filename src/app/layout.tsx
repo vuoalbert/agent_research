@@ -10,7 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AI · Starline",
+  title: "AI · Agent Research",
   description: "Chat interface for agent research",
 };
 

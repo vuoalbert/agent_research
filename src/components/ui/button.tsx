@@ -17,7 +17,7 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
         link: "text-primary underline-offset-4 hover:underline",
-        // ── Starline navigation ────────────────────────────────────────────
+        // ── Agent Research navigation ────────────────────────────────────────────
         // Paint only; the measured box stays in the caller's className so the
         // pixel geometry cannot drift when a variant is edited.
         // A sidebar row at rest, and the washed row the route has active.
