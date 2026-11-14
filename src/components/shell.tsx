@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
  *   content   x 310..1432, y 40..892 — an inset card that draws all four of
  *             its own borders with an 8px radius; the gutters right of and
  *             below it are 8px of page bg. The side tabs hang inside the card,
- *             off its right border: x 1403..1432, reaching 28px in from the
+ *             off its right border: x 1391..1432, reaching 40px in from the
  *             border's inner edge at 1431.
  *
  * Edge ownership — verified against the PNG by the region agents, and the
