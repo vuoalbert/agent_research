@@ -1,4 +1,14 @@
-import type { TelemCallMeta, TelemProviderRun } from "./events";
+/** what pricing needs to know about a call, whatever shape it came in */
+export type PricedRun = { provider: string; status: string; costUsd?: number; units?: number };
+export type PricedCall = {
+  kind: "search" | "fetch";
+  tier?: string;
+  /** did Telem answer at all (a failed call is free) */
+  ok: boolean;
+  /** Telem's own total for the call, when it ever reports one */
+  costUsd?: number;
+  runs: PricedRun[];
+};
 
 /**
  * What a Telem call cost — Telem's own figure when the response carried one,
@@ -51,9 +61,10 @@ export const FETCH_PRICES: Record<string, number> = {
 const UNKNOWN_SEARCH = 0.005;
 const UNKNOWN_FETCH = 0.001;
 
-const succeeded = (run: TelemProviderRun) => /^(succeeded|success|ok|done|completed)$/i.test(run.status);
+export const succeeded = (run: { status: string }) => /^(succeeded|success|ok|done|completed)$/i.test(run.status);
 
-function runPrice(kind: TelemCallMeta["kind"], run: TelemProviderRun, tier?: string): number {
+/** one run's price: its reported cost, or the list price at the tier */
+export function runPrice(kind: PricedCall["kind"], run: PricedRun, tier?: string): number {
   if (typeof run.costUsd === "number" && Number.isFinite(run.costUsd)) return run.costUsd;
   const provider = run.provider.toLowerCase();
   if (kind === "search") {
@@ -68,20 +79,34 @@ function runPrice(kind: TelemCallMeta["kind"], run: TelemProviderRun, tier?: str
   return FETCH_PRICES[provider] ?? UNKNOWN_FETCH;
 }
 
-export function estimateTelemCost(meta: TelemCallMeta): { costUsd: number; source: "actual" | "estimated" } {
-  if (typeof meta.costUsd === "number" && Number.isFinite(meta.costUsd)) return { costUsd: meta.costUsd, source: "actual" };
+export function estimateTelemCost(call: PricedCall): { costUsd: number; source: "actual" | "estimated" } {
+  if (typeof call.costUsd === "number" && Number.isFinite(call.costUsd)) return { costUsd: call.costUsd, source: "actual" };
   // a failed call is free
-  if (meta.status === "error") return { costUsd: 0, source: "estimated" };
-  const runs: TelemProviderRun[] = meta.runs?.length
-    ? meta.runs.filter(succeeded)
-    : meta.providers.map((provider) => ({ provider, status: "succeeded" }));
+  if (!call.ok) return { costUsd: 0, source: "estimated" };
+  const runs = call.runs.filter(succeeded);
   const allReported = runs.length > 0 && runs.every((run) => typeof run.costUsd === "number");
-  const costUsd = runs.reduce((total, run) => total + runPrice(meta.kind, run, meta.tier), 0);
+  const costUsd = runs.reduce((total, run) => total + runPrice(call.kind, run, call.tier), 0);
   return { costUsd, source: allReported ? "actual" : "estimated" };
 }
 
-/** a provider failed and another answered: Telem fell back */
-export function isFallback(meta: TelemCallMeta): boolean {
-  if (!meta.runs?.length || meta.status !== "ok") return false;
-  return meta.runs.some((run) => !succeeded(run)) && meta.runs.some(succeeded);
+/** a provider failed and another answered: Telem fell back within the call */
+export function isFallback(runs: readonly { status: string }[]): boolean {
+  return runs.some((run) => !succeeded(run)) && runs.some(succeeded);
+}
+
+/**
+ * The dollars a provider's native `usage` reports, when Telem passes it
+ * through (exa's `costDollars`, a number or `{ total }`).
+ */
+export function usageCost(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const u = usage as Record<string, unknown>;
+  for (const value of [u.costDollars, u.cost_dollars, u.cost_usd, u.costUsd]) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (value && typeof value === "object") {
+      const total = (value as Record<string, unknown>).total;
+      if (typeof total === "number" && Number.isFinite(total)) return total;
+    }
+  }
+  return undefined;
 }

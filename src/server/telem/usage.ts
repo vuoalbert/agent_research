@@ -13,7 +13,7 @@ import {
 } from "@/lib/telem-usage";
 
 import { onTelemCall, type TelemCallMeta } from "./events";
-import { estimateTelemCost, isFallback } from "./pricing";
+import { estimateTelemCost, isFallback, runPrice, succeeded, usageCost } from "./pricing";
 
 /**
  * The usage recorder: every Telem call (via events.ts), every Agent SDK run's
@@ -112,33 +112,55 @@ export function createUsageStore(dir: string = usageDir()): UsageStore {
   };
 }
 
-/** a Telem call as the line it is stored as */
+/** a Telem call (Telem-1's TelemCallMeta) as the line it is stored as */
 export function telemRecordFrom(meta: TelemCallMeta): TelemUsageRecord {
-  const { costUsd, source } = estimateTelemCost(meta);
+  const ok = meta.status === "succeeded" || meta.status === "partially_succeeded";
+  const runs = (meta.providers ?? []).map((run) => {
+    const cost = usageCost(run.usage);
+    return {
+      provider: run.provider,
+      status: run.status,
+      ...(typeof run.latencyMs === "number" ? { latencyMs: run.latencyMs } : {}),
+      ...(cost !== undefined ? { costUsd: cost } : {}),
+    };
+  });
+  const { costUsd, source } = estimateTelemCost({ kind: meta.kind, tier: meta.tier, ok, costUsd: meta.costUsd, runs });
+  const answered = [...new Set(runs.filter(succeeded).map((run) => run.provider))];
+  const query = meta.query ?? meta.urls?.join(" ");
   return {
     t: "telem",
-    at: meta.at ?? Date.now(),
+    at: meta.finishedAt ?? Date.now(),
     chatId: meta.chatId || UNSCOPED,
     kind: meta.kind,
-    providers: meta.providers,
-    ...(meta.runs?.length
-      ? { runs: meta.runs.map(({ provider, status, latencyMs, costUsd: c }) => ({ provider, status, latencyMs, costUsd: c })) }
+    providers: ok ? answered : [],
+    // each run's own part of the cost, so per-provider totals are not an even split
+    // (unless Telem gave one total for the whole call)
+    ...(runs.length
+      ? {
+          runs: typeof meta.costUsd === "number"
+            ? runs
+            : runs.map((run) => ({ ...run, priceUsd: ok && succeeded(run) ? runPrice(meta.kind, run, meta.tier) : 0 })),
+        }
       : {}),
     latencyMs: meta.latencyMs,
-    status: meta.status,
-    ...(meta.error ? { error: meta.error } : {}),
+    status: ok ? "ok" : "error",
+    ...(meta.error ? { error: meta.error.slice(0, 300) } : {}),
     ...(meta.tier ? { tier: meta.tier } : {}),
     costUsd,
     costSource: source,
-    ...(isFallback(meta) ? { fallback: true } : {}),
-    ...(meta.query ? { query: meta.query.slice(0, 300) } : meta.urls?.length ? { query: meta.urls.join(" ").slice(0, 300) } : {}),
+    // Telem failed and Tavily served it, or one provider failed and another answered
+    ...(meta.fallback || (ok && isFallback(runs)) ? { fallback: true } : {}),
+    ...(meta.fallback ? { fallbackTo: meta.fallback } : {}),
+    ...(query ? { query: query.slice(0, 300) } : {}),
     ...(meta.sessionId ? { sessionId: meta.sessionId } : {}),
     ...(meta.trajectoryId ? { trajectoryId: meta.trajectoryId } : {}),
     ...(meta.parentTrajectoryId ? { parentTrajectoryId: meta.parentTrajectoryId } : {}),
     ...(meta.interactionId ? { interactionId: meta.interactionId } : {}),
-    ...(meta.turn !== undefined ? { turn: meta.turn } : {}),
-    agent: meta.agent || "main",
-    ...(meta.callId ? { callId: meta.callId } : {}),
+    ...(meta.turnId ? { turnId: meta.turnId } : {}),
+    agent: meta.agentId || "main",
+    ...(meta.agentTitle ? { title: meta.agentTitle } : {}),
+    ...(meta.caller ? { caller: meta.caller } : {}),
+    callId: meta.id,
   };
 }
 
@@ -191,24 +213,37 @@ export function claudeRecordFrom(
 
 // ── the process-wide recorder ────────────────────────────────────────────────
 
+/**
+ * One store per process (on globalThis), but one subscription per copy of
+ * events.ts: Next can bundle a route's modules separately, and a call only
+ * reaches the listeners of the events.ts its client imported. Every bundle
+ * that imports this file subscribes its own copy, all writing to one store.
+ */
 const KEY = Symbol.for("agent_research.telem.usage");
-type Holder = { [KEY]?: { store: UsageStore; stop: () => void } };
+type Recorder = { store: UsageStore; subscriptions: Map<typeof onTelemCall, () => void> };
+type Holder = { [KEY]?: Recorder };
 
-/** start recording Telem calls (once per process); returns the store */
+/** start recording Telem calls; returns the store. Passing a store replaces it (tests). */
 export function startUsageRecorder(store?: UsageStore): UsageStore {
   const holder = globalThis as Holder;
-  if (holder[KEY] && !store) return holder[KEY].store;
-  holder[KEY]?.stop();
-  const active = store ?? createUsageStore();
-  const stop = onTelemCall((meta) => active.append(telemRecordFrom(meta)));
-  holder[KEY] = { store: active, stop };
-  return active;
+  if (store) {
+    if (holder[KEY]) holder[KEY].store = store;
+    else holder[KEY] = { store, subscriptions: new Map() };
+  }
+  const recorder = (holder[KEY] ??= { store: createUsageStore(), subscriptions: new Map() });
+  if (!recorder.subscriptions.has(onTelemCall)) {
+    recorder.subscriptions.set(
+      onTelemCall,
+      onTelemCall((meta) => (holder[KEY] ?? recorder).store.append(telemRecordFrom(meta))),
+    );
+  }
+  return recorder.store;
 }
 
 /** stop and forget the recorder (tests) */
 export function stopUsageRecorder(): void {
   const holder = globalThis as Holder;
-  holder[KEY]?.stop();
+  for (const off of holder[KEY]?.subscriptions.values() ?? []) off();
   delete holder[KEY];
 }
 
@@ -239,3 +274,7 @@ export async function chatUsage(chatId: string, store: UsageStore = startUsageRe
 export async function allUsage(store: UsageStore = startUsageRecorder()): Promise<AllUsage> {
   return summarizeAll(await store.readAll());
 }
+
+// subscribe as soon as a route imports the recorder: a turn's first search
+// comes long before its first result
+startUsageRecorder();

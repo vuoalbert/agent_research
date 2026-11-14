@@ -11,7 +11,15 @@
 
 export const TELEM_CONSOLE_URL = "https://app.telem.ai/";
 
-export type TelemRunRecord = { provider: string; status: string; latencyMs?: number; costUsd?: number };
+export type TelemRunRecord = {
+  provider: string;
+  status: string;
+  latencyMs?: number;
+  /** what the provider reported it cost */
+  costUsd?: number;
+  /** what this run is counted at: reported, or the list price; 0 when it failed */
+  priceUsd?: number;
+};
 
 export type TelemUsageRecord = {
   t: "telem";
@@ -29,13 +37,22 @@ export type TelemUsageRecord = {
   costSource: "actual" | "estimated";
   /** a provider failed and another answered in its place */
   fallback?: boolean;
+  /** Telem failed outright and this served the call instead */
+  fallbackTo?: string;
   query?: string;
   sessionId?: string;
   trajectoryId?: string;
   parentTrajectoryId?: string;
   interactionId?: string;
   turn?: number;
+  /** the client's turn id (one POST /api/chat) */
+  turnId?: string;
+  /** "main", or the subagent's id */
   agent: string;
+  /** the subagent's title */
+  title?: string;
+  /** who in the app made it: chat, subagent, crossref… */
+  caller?: string;
   callId?: string;
 };
 
@@ -151,13 +168,16 @@ export function providerShares(records: readonly UsageRecord[]): ProviderShare[]
   const byProvider = new Map<string, { calls: number; costUsd: number }>();
   for (const record of records.filter(isTelem)) {
     if (record.status !== "ok") continue;
-    const answered = record.providers.length > 0 ? record.providers : [];
-    // a call's cost is split evenly over the providers that answered it
+    const answered = record.providers;
+    // each run's own price when recorded; otherwise the call's cost split evenly
+    const priced = record.runs?.some((run) => typeof run.priceUsd === "number");
     const each = answered.length ? record.costUsd / answered.length : 0;
     for (const provider of answered) {
       const entry = byProvider.get(provider) ?? { calls: 0, costUsd: 0 };
       entry.calls += 1;
-      entry.costUsd += each;
+      entry.costUsd += priced
+        ? sum((record.runs ?? []).filter((run) => run.provider === provider).map((run) => run.priceUsd ?? 0))
+        : each;
       byProvider.set(provider, entry);
     }
   }
@@ -193,6 +213,7 @@ export function researchTree(records: readonly UsageRecord[]): ChatUsage["tree"]
       if (record.title) target.title = record.title;
       continue;
     }
+    if (record.title && target !== main) target.title = record.title;
     if (record.kind === "search") target.searches += 1;
     else target.fetches += 1;
     if (record.status === "error") target.failures += 1;

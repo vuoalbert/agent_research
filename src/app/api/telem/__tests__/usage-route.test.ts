@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { emitTelemCall } from "@/server/telem/events";
+import { emitTelemCall, type TelemCallMeta } from "@/server/telem/events";
 import { createUsageStore, recordClaudeResult, startUsageRecorder, stopUsageRecorder } from "@/server/telem/usage";
 
 import { GET } from "../usage/route";
@@ -20,6 +20,20 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+const call = (over: Partial<TelemCallMeta>): TelemCallMeta => ({
+  id: crypto.randomUUID(),
+  kind: "search",
+  caller: "chat",
+  status: "succeeded",
+  providers: [],
+  resultCount: 1,
+  latencyMs: 500,
+  startedAt: Date.now() - 500,
+  finishedAt: Date.now(),
+  ...over,
+});
+const answered = (provider: string) => ({ provider, status: "succeeded", latencyMs: 400, results: 1 });
+
 const get = (query: string) => GET(new Request(`http://localhost/api/telem/usage${query}`));
 
 describe("GET /api/telem/usage", () => {
@@ -28,7 +42,7 @@ describe("GET /api/telem/usage", () => {
   });
 
   it("returns one chat's usage, including calls still being written", async () => {
-    emitTelemCall({ kind: "search", providers: ["brave"], latencyMs: 700, status: "ok", chatId: "c1", sessionId: "s1" });
+    emitTelemCall(call({ providers: [answered("brave")], latencyMs: 700, chatId: "c1", sessionId: "s1" }));
     recordClaudeResult({ type: "result", subtype: "success", total_cost_usd: 0.3 }, { chatId: "c1" });
     const response = await get("?chat=c1");
     expect(response.status).toBe(200);
@@ -47,8 +61,8 @@ describe("GET /api/telem/usage", () => {
   });
 
   it("totals every chat with scope=all", async () => {
-    emitTelemCall({ kind: "search", providers: ["exa"], latencyMs: 500, status: "ok", chatId: "a" });
-    emitTelemCall({ kind: "fetch", providers: ["tavily"], latencyMs: 900, status: "ok", chatId: "b" });
+    emitTelemCall(call({ providers: [answered("exa")], chatId: "a" }));
+    emitTelemCall(call({ kind: "fetch", providers: [answered("tavily")], latencyMs: 900, chatId: "b" }));
     const body = await (await get("?scope=all")).json();
     expect(body.scope).toBe("all");
     expect(body.usage.totals).toMatchObject({ searches: 1, fetches: 1 });
