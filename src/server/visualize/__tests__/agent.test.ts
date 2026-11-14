@@ -98,6 +98,10 @@ describe("the agent's options", () => {
     expect(prompt).toMatch(/e\.detail\.exploded/);
     expect(prompt).toMatch(/prefers-reduced-motion/);
     expect(prompt).toMatch(/Don't draw your own explode button or parts list/);
+    // the card fills the window: its hint and readout stay, nothing below it
+    expect(prompt).toMatch(/keep its corner texts \(title, the interaction hint and the live readout\)/);
+    expect(prompt).toMatch(/no legend keys, no caption, no explanatory paragraph/);
+    expect(prompt).toMatch(/pan\/zoom/);
   });
 });
 
