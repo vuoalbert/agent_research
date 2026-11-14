@@ -30,7 +30,7 @@ describe("AiThread — tool rows", () => {
     expect(row.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("appends the source count once done, one row per call, in order", () => {
+  it("shows no source count once done, one row per call, in order", () => {
     const { container } = render(
       <AiThread
         messages={messages(
@@ -47,13 +47,39 @@ describe("AiThread — tool rows", () => {
     );
     const rows = [...container.querySelectorAll<HTMLElement>('[data-ai="tool"]')];
     expect(rows.map((r) => r.textContent)).toEqual([
-      "Tavilymarble· 2 sources",
-      "Tavilymarble pricing· 1 source",
+      "Tavilymarble",
+      "Tavilymarble pricing",
     ]);
     expect(rows[0].className).not.toContain("animate-pulse");
     const text = container.querySelector('[data-role="assistant"] p')!;
     expect(text.textContent).toBe("Marble is a world model.");
     expect(rows[1].compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("labels a page read as Reading and its hosts", () => {
+    const { container } = render(
+      <AiThread
+        messages={messages(
+          [
+            { id: "t1", name: "Tavily", query: "minecraft sales", status: "done", sources: [{ title: "A", url: "https://a.com" }] },
+            {
+              id: "t2",
+              name: "Tavily",
+              action: "read",
+              query: "minecraft.net, en.wikipedia.org",
+              status: "done",
+              sources: [{ title: "A", url: "https://a.com" }, { title: "B", url: "https://b.com" }],
+            },
+          ],
+          "Both agree.",
+        )}
+      />,
+    );
+    const rows = [...container.querySelectorAll<HTMLElement>('[data-ai="tool"]')];
+    expect(rows.map((r) => r.dataset.action)).toEqual(["search", "read"]);
+    expect(rows[1].textContent).toBe("TavilyReading minecraft.net, en.wikipedia.org");
+    expect(rows[1].querySelector(".truncate")).not.toBeNull();
+    for (const row of rows) expect(row.textContent).not.toMatch(/source/);
   });
 
   it("renders an old assistant turn with no tools as before", () => {

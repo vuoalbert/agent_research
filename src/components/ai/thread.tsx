@@ -198,14 +198,15 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
 
 /**
  * One tool call, the way Claude Code prints its tool lines: a wrench, the
- * tool's name, then what it was asked, cut to one line. It pulses while the
- * call runs and says how many sources it brought back once it is done.
+ * tool's name, then what it was asked — the search query, or "Reading" and the
+ * hosts for a page read — cut to one line. It pulses while the call runs.
  */
 function ToolRow({ call }: { call: ToolCall }) {
-  const count = call.sources?.length ?? 0;
+  const detail = call.action === "read" ? `Reading ${call.query}` : call.query;
   return (
     <div
       data-ai="tool"
+      data-action={call.action ?? "search"}
       data-status={call.status}
       className={cn(
         "flex min-w-0 items-center gap-1.5 px-1 text-[13px] leading-5",
@@ -214,12 +215,7 @@ function ToolRow({ call }: { call: ToolCall }) {
     >
       <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
       <span className="shrink-0 font-medium text-[var(--ai-ink)]">{call.name}</span>
-      <span className="min-w-0 truncate text-[var(--ai-muted)]">{call.query}</span>
-      {call.status === "done" && (
-        <span className="shrink-0 text-[var(--ai-muted)]">
-          · {count} {count === 1 ? "source" : "sources"}
-        </span>
-      )}
+      <span className="min-w-0 truncate text-[var(--ai-muted)]">{detail}</span>
       {call.status === "error" && (
         <span className="shrink-0 text-[var(--ai-muted)]">· failed</span>
       )}

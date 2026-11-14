@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const query = vi.fn();
 /* `tool` and `createSdkMcpServer` stand in as plain records, so a test can
    reach the handler the route registered and call it the way Claude would. */
-type Handler = (args: { query: string }, extra: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+type Handler = (args: { query: string } | { urls: string[] }, extra: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: (args: unknown) => query(args),
   tool: (name: string, description: string, schema: unknown, handler: Handler) => ({ name, description, schema, handler }),
@@ -19,13 +19,19 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 const search = vi.fn();
-const tavily = vi.fn((_options: { apiKey: string }) => ({ search }));
+const extract = vi.fn();
+const tavily = vi.fn((_options: { apiKey: string }) => ({ search, extract }));
 vi.mock("@tavily/core", () => ({ tavily: (options: { apiKey: string }) => tavily(options) }));
 
 /** the Tavily handler the route handed the SDK in its latest call */
 const searchHandler = () => {
   const { options } = query.mock.calls.at(-1)![0];
   return options.mcpServers.research.tools[0] as { name: string; handler: Handler };
+};
+/** the Tavily Extract (page read) handler */
+const extractHandler = () => {
+  const { options } = query.mock.calls.at(-1)![0];
+  return options.mcpServers.research.tools[1] as { name: string; handler: Handler };
 };
 
 /** the SDK's frame for one Messages API streaming event */
@@ -59,6 +65,7 @@ describe("POST /api/chat", () => {
   beforeEach(() => {
     query.mockReset();
     search.mockReset();
+    extract.mockReset();
     tavily.mockClear();
     vi.stubEnv("TAVILY_API_KEY", "test-key");
   });
@@ -81,7 +88,7 @@ describe("POST /api/chat", () => {
     await readAll(response);
   });
 
-  it("asks Opus 5.5 at high effort, with only Tavily search and no repo settings", async () => {
+  it("asks Opus 5.5 at high effort, with only Tavily search and read and no repo settings", async () => {
     query.mockReturnValue(stream(delta("x")));
     await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
 
@@ -96,13 +103,105 @@ describe("POST /api/chat", () => {
     expect(options.tools).toEqual([]);
     expect(options.settingSources).toEqual([]);
     expect(Object.keys(options.mcpServers)).toEqual(["research"]);
-    expect(options.mcpServers.research.tools.map((t: { name: string }) => t.name)).toEqual(["tavily_search"]);
-    expect(options.allowedTools).toEqual(["mcp__research__tavily_search"]);
+    expect(options.mcpServers.research.tools.map((t: { name: string }) => t.name)).toEqual([
+      "tavily_search",
+      "tavily_extract",
+    ]);
+    expect(options.allowedTools).toEqual(["mcp__research__tavily_search", "mcp__research__tavily_extract"]);
     expect(options.permissionMode).toBe("dontAsk");
-    expect(options.maxTurns).toBeGreaterThanOrEqual(4);
+    expect(options.maxTurns).toBe(12);
     expect(options.includePartialMessages).toBe(true);
     // a single-turn ask goes over as itself, with no transcript preamble
     expect(prompt).toBe("hi");
+  });
+
+  it("tells Claude to read and cross-reference sources, without counting them", async () => {
+    query.mockReturnValue(stream(delta("x")));
+    await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
+    const { systemPrompt } = query.mock.calls[0][0].options;
+    expect(systemPrompt).toContain("tavily_extract");
+    expect(systemPrompt).toMatch(/cross-reference/i);
+    expect(systemPrompt).toMatch(/at least two sources/i);
+    expect(systemPrompt).toMatch(/disagree/i);
+    expect(systemPrompt).toMatch(/primary or official/i);
+    expect(systemPrompt).toMatch(/do not mention how many sources/i);
+    expect(systemPrompt).toMatch(/don't need outside facts/i);
+  });
+
+  it("streams a page read as a 'read' tool event and hands Claude each page, capped", async () => {
+    const long = "x".repeat(7000);
+    extract.mockResolvedValue({
+      results: [
+        { url: "https://www.minecraft.net/en-us/article/sales", title: "Minecraft sales", rawContent: "300 million copies." },
+        { url: "https://en.wikipedia.org/wiki/Minecraft", title: null, rawContent: long },
+      ],
+      failedResults: [{ url: "https://blocked.example.com/a", error: "403 Forbidden" }],
+      responseTime: 1,
+      requestId: "r",
+    });
+    let toolText = "";
+    const urls = [
+      "https://www.minecraft.net/en-us/article/sales",
+      "https://en.wikipedia.org/wiki/Minecraft",
+      "https://blocked.example.com/a",
+    ];
+    query.mockImplementation(() =>
+      (async function* () {
+        const result = await extractHandler().handler({ urls }, {});
+        toolText = result.content[0].text;
+        yield delta("Both agree.");
+      })(),
+    );
+    const body = await readAll(await post({ messages: [{ role: "user", content: "minecraft sales" }] }));
+
+    expect(extractHandler().name).toBe("tavily_extract");
+    expect(extract).toHaveBeenCalledWith(urls, { extractDepth: "basic", format: "text" });
+    const frames = [...body.matchAll(/event: tool\ndata: (.*)/g)].map((m) => JSON.parse(m[1]));
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatchObject({
+      name: "Tavily",
+      action: "read",
+      query: "minecraft.net, en.wikipedia.org, blocked.example.com",
+      status: "running",
+    });
+    // the pages actually read become sources; the failed one does not
+    expect(frames[1]).toEqual({
+      id: frames[0].id,
+      status: "done",
+      sources: [
+        { title: "Minecraft sales", url: "https://www.minecraft.net/en-us/article/sales" },
+        { title: "https://en.wikipedia.org/wiki/Minecraft", url: "https://en.wikipedia.org/wiki/Minecraft" },
+      ],
+    });
+    expect(toolText).toContain("[1] Minecraft sales\nURL: https://www.minecraft.net/en-us/article/sales\n300 million copies.");
+    expect(toolText).toContain("x".repeat(6000));
+    expect(toolText).not.toContain("x".repeat(6001));
+    expect(toolText).toContain("[truncated: showing the first 6000 of 7000 characters]");
+    expect(toolText).toContain("Could not read https://blocked.example.com/a: 403 Forbidden");
+  });
+
+  it("returns an error to Claude when no page could be read, and when Extract throws", async () => {
+    extract.mockResolvedValueOnce({
+      results: [],
+      failedResults: [{ url: "https://a.com", error: "timeout" }],
+      responseTime: 1,
+      requestId: "r",
+    });
+    extract.mockRejectedValueOnce(new Error("rate limited"));
+    const results: Awaited<ReturnType<Handler>>[] = [];
+    query.mockImplementation(() =>
+      (async function* () {
+        results.push(await extractHandler().handler({ urls: ["https://a.com"] }, {}));
+        results.push(await extractHandler().handler({ urls: ["https://a.com"] }, {}));
+        yield delta("ok");
+      })(),
+    );
+    const body = await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
+    expect(results[0].isError).toBe(true);
+    expect(results[0].content[0].text).toContain("Could not read https://a.com: timeout");
+    expect(results[1].isError).toBe(true);
+    expect(results[1].content[0].text).toContain("rate limited");
+    expect(body).toMatch(/"status":"error"/);
   });
 
   it("streams a search as tool events and hands Claude the results as text", async () => {
