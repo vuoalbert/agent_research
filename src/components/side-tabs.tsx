@@ -18,6 +18,8 @@ import {
 } from "@/lib/motion-tokens";
 import { cn } from "@/lib/utils";
 
+import { KnowledgeBase } from "@/components/knowledge-base";
+
 /**
  * SideTabs — four labelled handles hanging inward from the chat card's right
  * edge, each one a browser tab turned on its side: the base, with its two
@@ -136,8 +138,17 @@ const OUTLINE_GREY = "#D6D7D9";
 /** the panel's width, and the most of the card it may cover on a narrow window */
 const PANEL_WIDTH = 320;
 const PANEL_MAX_SHARE = 0.45;
-/** the panel's left corners */
+/** the panel's top-left corner */
 const PANEL_RADIUS = 8;
+/**
+ * How far below the stack the card's inner bottom edge is: the shell sets the
+ * stack 16px above the content column's bottom (`bottom-4`), and under the
+ * card's inner edge are its 1px border and the 8px gutter. The panel reaches
+ * this far past the stack so its bottom is the card's own bottom border.
+ */
+const PANEL_BOTTOM_REACH = 16 - 8 - 1;
+/** the card's 8px outer corner, inside its 1px border: the panel's bottom-right follows it */
+const CARD_INNER_RADIUS = 8 - 1;
 
 /**
  * Seconds. The slide is the one long move here: it carries a 320px surface,
@@ -274,10 +285,18 @@ export function SideTabs({ className }: { className?: string }) {
       {/* The panels' window: from the stack's left out to the card border's
           inner edge, so a panel slides out of the border rather than over the
           gutter. It starts one corner radius above the stack, so the panel's
-          rounded corner is done before the top tab's flare begins. */}
+          rounded corner is done before the top tab's flare begins, and runs
+          down to the card's inner bottom edge, so the panel stands on the
+          card's bottom border. Its bottom-right corner is the card's inner
+          corner, so nothing pokes past the card's rounded edge. */}
       <div
-        className="absolute right-px bottom-0 overflow-hidden"
-        style={{ top: -PANEL_RADIUS, width: panelWidth }}
+        className="absolute right-px overflow-hidden"
+        style={{
+          top: -PANEL_RADIUS,
+          bottom: -PANEL_BOTTOM_REACH,
+          width: panelWidth,
+          borderBottomRightRadius: CARD_INNER_RADIUS,
+        }}
       >
         {present.map((label) => (
           <SideTabPanel
@@ -400,7 +419,7 @@ function SideTabPanel({
   return (
     /* Parked just past the window's right edge, then carried in by its tab's
        offset: at -width it fills the window exactly, its left border on the
-       tab's base column. Its right side is the card's own border. */
+       tab's base column. Its right side and its bottom are the card's own border. */
     <motion.section
       id={id}
       data-side-tab-panel={label}
@@ -409,20 +428,25 @@ function SideTabPanel({
       inert={!open}
       className={cn(
         "pointer-events-auto absolute top-0 bottom-0 left-full overflow-y-auto",
-        "border border-r-0 bg-plane-pane px-4 pt-3.5 pb-4",
+        /* no right or bottom border: those are the card's own */
+        "border border-r-0 border-b-0 bg-plane-pane px-4 pt-3.5 pb-4",
         NO_SCROLLBAR,
       )}
       style={{
         x: offset,
         width,
         borderColor: OUTLINE_GREY,
+        /* square at the bottom: its left border meets the card's bottom border */
         borderTopLeftRadius: PANEL_RADIUS,
-        borderBottomLeftRadius: PANEL_RADIUS,
       }}
     >
-      <h2 id={`${id}-title`} className="text-[13px] leading-5 font-semibold text-plane-ink">
-        {label}
-      </h2>
+      {label === "Knowledge base" ? (
+        <KnowledgeBase titleId={`${id}-title`} />
+      ) : (
+        <h2 id={`${id}-title`} className="text-[13px] leading-5 font-semibold text-plane-ink">
+          {label}
+        </h2>
+      )}
     </motion.section>
   );
 }

@@ -47,11 +47,24 @@ export type Chat = {
   group?: string;
 };
 
+export type Source = { title: string; url: string };
+
+/** one tool call inside an assistant turn, as the route's `tool` events report it */
+export type ToolCall = {
+  id: string;
+  name: string;
+  query: string;
+  status: "running" | "done" | "error";
+  sources?: Source[];
+};
+
 export type Message = {
   id: string;
   role: Role;
   content: string;
   createdAt: number;
+  /** assistant turns only, in call order; absent on turns saved before tools */
+  tools?: ToolCall[];
 };
 
 export type AgentState = {
@@ -438,6 +451,62 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
   return true;
 }
 
+/** the route's `tool` frame: a call starting, or one it started ending */
+type ToolEvent =
+  | { id: string; name: string; query: string; status: "running" }
+  | { id: string; status: "done"; sources?: Source[] }
+  | { id: string; status: "error" };
+
+/** fold one `tool` frame into a turn's calls: a start appends, an end updates in place */
+export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: ToolEvent): ToolCall[] {
+  const list = tools ?? [];
+  if (event.status === "running") {
+    if (list.some((call) => call.id === event.id)) return [...list];
+    return [...list, { id: event.id, name: event.name, query: event.query, status: "running" }];
+  }
+  return list.map((call) =>
+    call.id !== event.id
+      ? call
+      : event.status === "done"
+        ? { ...call, status: "done", sources: event.sources ?? [] }
+        : { ...call, status: "error" },
+  );
+}
+
+/** rewrite a turn's tool calls in place */
+function updateTools(chatId: string, messageId: string, update: (tools: ToolCall[] | undefined) => ToolCall[]) {
+  const current = getSnapshot();
+  const turns = current.messages[chatId];
+  if (!turns) return false;
+  setState({
+    ...current,
+    messages: {
+      ...current.messages,
+      [chatId]: turns.map((turn) => (turn.id === messageId ? { ...turn, tools: update(turn.tools) } : turn)),
+    },
+  });
+  return true;
+}
+
+/**
+ * Every source a chat's searches turned up, de-duplicated by URL in the order
+ * they were first seen. Tolerates turns saved before tools existed.
+ */
+export function selectChatSources(messages: readonly Message[] | undefined): Source[] {
+  const seen = new Set<string>();
+  const sources: Source[] = [];
+  for (const message of messages ?? []) {
+    for (const call of Array.isArray(message.tools) ? message.tools : []) {
+      for (const source of call.sources ?? []) {
+        if (!source || typeof source.url !== "string" || seen.has(source.url)) continue;
+        seen.add(source.url);
+        sources.push({ title: source.title || source.url, url: source.url });
+      }
+    }
+  }
+  return sources;
+}
+
 /** Stop the reply in flight for a chat, keeping whatever text already arrived. */
 function stopStreaming(chatId: string) {
   inFlight.get(chatId)?.abort();
@@ -483,6 +552,9 @@ async function streamReply(chatId: string, replyId: string) {
           text += (JSON.parse(raw) as { text: string }).text;
           // the chat may have been deleted mid-answer
           if (!setMessageContent(chatId, replyId, text)) return;
+        } else if (event === "tool") {
+          const tool = JSON.parse(raw) as ToolEvent;
+          if (!updateTools(chatId, replyId, (tools) => applyToolEvent(tools, tool))) return;
         } else if (event === "error") {
           throw new Error((JSON.parse(raw) as { message: string }).message);
         }
@@ -496,6 +568,14 @@ async function streamReply(chatId: string, replyId: string) {
     if (!aborted) setMessageContent(chatId, replyId, text || ERROR_REPLY);
     persist();
   } finally {
+    // a call cut off by Stop or a failure never reports its end: settle it, so
+    // a reload does not pulse it forever
+    const reply = getSnapshot().messages[chatId]?.find((turn) => turn.id === replyId);
+    if (reply?.tools?.some((call) => call.status === "running")) {
+      updateTools(chatId, replyId, (tools) =>
+        (tools ?? []).map((call) => (call.status === "running" ? { ...call, status: "error" } : call)),
+      );
+    }
     inFlight.delete(chatId);
     setStreaming(chatId, false);
   }

@@ -1,5 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+import { TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer } from "./tavily";
+
 /**
  * POST /api/chat — one turn of Agent Research, streamed.
  *
@@ -13,6 +15,9 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
  * Request:  { messages: { role: "user" | "assistant", content: string }[] }
  * Response: text/event-stream of
  *             event: delta   data: {"text": "..."}
+ *             event: tool    data: {"id","name":"Tavily","query","status":"running"}
+ *                            data: {"id","status":"done","sources":[{"title","url"}]}
+ *                            data: {"id","status":"error","message"}
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -31,8 +36,12 @@ export const dynamic = "force-dynamic";
 const MODEL = "claude-opus-5-5";
 const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
+/** enough for a few searches and the answer after them */
+const MAX_AGENT_TURNS = 8;
 const SYSTEM_PROMPT =
-  "You are Agent Research, an AI assistant. Be concise.";
+  "You are Agent Research, an AI assistant. Be concise. " +
+  "Use the tavily_search tool when a question needs current or external information, " +
+  "and cite the sources you used by name and URL.";
 
 type Turn = { role: "user" | "assistant"; content: string };
 
@@ -94,29 +103,48 @@ export async function POST(request: Request) {
             effort: EFFORT,
             thinking: { type: "adaptive" },
             systemPrompt: SYSTEM_PROMPT,
-            // one turn, no tools, no filesystem settings: this is a chat reply,
-            // not an agent. `tools: []` disables the built-ins; `settingSources:
-            // []` keeps the repo's own CLAUDE.md and hooks out of it.
+            // No built-in tools and no filesystem settings: `tools: []` turns the
+            // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
+            // and hooks out. The one tool is Tavily search, pre-approved;
+            // `dontAsk` denies anything else rather than prompting.
             tools: [],
             settingSources: [],
-            maxTurns: 1,
+            mcpServers: {
+              [TAVILY_SERVER]: createTavilyServer((activity) => {
+                if (!abort.signal.aborted) send(controller, "tool", activity);
+              }),
+            },
+            allowedTools: [TAVILY_TOOL_ID],
+            permissionMode: "dontAsk",
+            maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,
             abortController: abort,
           },
         });
 
+        /** text has gone out, and a new text block since should start a paragraph */
+        let sentText = false;
+        let breakBeforeNext = false;
         for await (const message of run) {
           if (abort.signal.aborted) break;
           // Text arrives as Messages API streaming events wrapped in the SDK's
           // `stream_event` frame — not as a top-level delta message.
           if (message.type === "stream_event") {
             const event = message.event;
-            if (
+            if (event.type === "content_block_start" && event.content_block.type === "text") {
+              // a reply split around a search ("Let me look." … the answer)
+              // must not run its two halves together
+              breakBeforeNext = sentText;
+            } else if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta" &&
               event.delta.text
             ) {
-              send(controller, "delta", { text: event.delta.text });
+              send(controller, "delta", {
+                text: (breakBeforeNext ? "\n\n" : "") + event.delta.text,
+              });
+              sentText = true;
+              breakBeforeNext = false;
             }
           } else if (message.type === "result" && message.subtype !== "success") {
             send(controller, "error", { message: `Agent Research stopped: ${message.subtype}` });
