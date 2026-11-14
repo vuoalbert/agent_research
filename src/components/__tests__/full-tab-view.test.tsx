@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PLACEHOLDER_NODE_COUNT, placeholderGraph } from "@/components/force-graph-3d";
+import { EMPTY_TEXT } from "@/components/force-graph-3d";
 import { Shell } from "@/components/shell";
 import { SIDE_PANEL_INSET, SIDE_TAB_LABELS } from "@/components/side-tabs";
 import { defaultView } from "@/lib/navigation";
@@ -129,19 +129,14 @@ describe("full-width tab views", () => {
     const host = view.querySelector("[data-force-graph]");
     expect(graphs.mounted[0]).toBe(host);
     expect(host?.querySelector("canvas")).not.toBeNull();
-    expect((graphs.data as { nodes: unknown[] }).nodes).toHaveLength(PLACEHOLDER_NODE_COUNT);
-    expect(host?.getAttribute("data-nodes")).toBe(String(PLACEHOLDER_NODE_COUNT));
+    // no research in the store yet: an empty graph and the empty-state line
+    await waitFor(() => expect(host?.getAttribute("data-nodes")).toBe("0"));
+    expect((graphs.data as { nodes: unknown[] }).nodes).toHaveLength(0);
+    expect(view.textContent).toContain(EMPTY_TEXT);
 
     fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => expect(graphs.destroyed).toBe(1));
     expect(document.querySelector("[data-force-graph]")).toBeNull();
-  });
-
-  it("builds the same placeholder tree every time", () => {
-    const a = placeholderGraph();
-    expect(a).toEqual(placeholderGraph());
-    expect(a.nodes).toHaveLength(PLACEHOLDER_NODE_COUNT);
-    expect(a.links).toHaveLength(PLACEHOLDER_NODE_COUNT - 1);
   });
 });
