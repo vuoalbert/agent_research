@@ -3,11 +3,13 @@
  * the page and its card in warm paper tones (`--anatomy-page`,
  * `--anatomy-card`, `--anatomy-paper`); this pins all three, and the page
  * itself, to #FFFFFF when the figure is served — so figures built before the
- * white-background instruction match too. Inline <style> is allowed by the
- * figure's CSP.
+ * white-background instruction match too. The kit sets those variables on
+ * `.iso[data-theme]` (the body), so they are pinned there as well as on
+ * :root — a :root rule alone loses to the body's own values. Inline <style>
+ * is allowed by the figure's CSP.
  */
 export const WHITE_FIGURE_STYLE =
-  '<style data-agent-research="white">:root{--anatomy-page:#fff!important;--anatomy-card:#fff!important;--anatomy-paper:#fff!important}html,body{background:#fff!important}</style>';
+  '<style data-agent-research="white">:root,.iso,.iso[data-theme]{--anatomy-page:#fff!important;--anatomy-card:#fff!important;--anatomy-paper:#fff!important}html,body{background:#fff!important}</style>';
 
 export function whiteFigure(html: string): string {
   if (html.includes('data-agent-research="white"')) return html;

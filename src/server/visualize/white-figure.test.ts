@@ -11,6 +11,10 @@ describe("whiteFigure", () => {
     expect(out).toContain("--anatomy-paper:#fff!important");
   });
 
+  it("pins the colours on the kit's .iso[data-theme] body too, where the kit sets them", () => {
+    expect(WHITE_FIGURE_STYLE).toContain(":root,.iso,.iso[data-theme]{");
+  });
+
   it("prepends the style when the page has no head", () => {
     expect(whiteFigure("<body>hi</body>")).toBe(`${WHITE_FIGURE_STYLE}<body>hi</body>`);
   });

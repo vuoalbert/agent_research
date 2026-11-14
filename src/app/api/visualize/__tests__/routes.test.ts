@@ -119,7 +119,11 @@ describe("/api/visualize", () => {
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain("connect-src 'none'");
     expect(csp).not.toContain("allow-same-origin");
-    expect(await response.text()).toContain("<title>Dial</title>");
+    const served = await response.text();
+    expect(served).toContain("<title>Dial</title>");
+    // on white, frameless, with the parts chrome
+    expect(served).toContain('data-agent-research="white"');
+    expect(served.match(/data-agent-research="chrome"/g)).toHaveLength(2);
 
     for (const id of ["../../../.env.local", "..", "%2e%2e", `${job.id}/../x`, "", "missing-job"])
       expect((await getFigure(request("/f"), ctx(id))).status, id).toBe(404);

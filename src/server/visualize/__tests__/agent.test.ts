@@ -83,9 +83,21 @@ describe("the agent's options", () => {
     expect(prompt).toMatch(/--light/);
     expect(prompt).toMatch(/framework-free standalone HTML/);
     expect(prompt).toMatch(/\.\/figure\.html/);
+    expect(prompt).toMatch(/no frame/);
+    expect(prompt).toMatch(/\.iso-plate\{box-shadow:none\}/);
     const { systemPrompt } = agentOptions({ studio, paths, log: () => {} }, new AbortController());
     expect(JSON.stringify(systemPrompt)).toMatch(/Never publish, push, upload or share/);
     expect(JSON.stringify(systemPrompt)).toMatch(/browser_check/);
+  });
+
+  it("spells out the figure contract: marked parts and the ar:explode event", () => {
+    const prompt = jobPrompt(job, paths, studio);
+    expect(prompt).toMatch(/8-30 meaningful parts/);
+    expect(prompt).toContain('<g data-part="Short name" data-part-info="One sentence: what it does.">');
+    expect(prompt).toContain('window.addEventListener("ar:explode"');
+    expect(prompt).toMatch(/e\.detail\.exploded/);
+    expect(prompt).toMatch(/prefers-reduced-motion/);
+    expect(prompt).toMatch(/Don't draw your own explode button or parts list/);
   });
 });
 
