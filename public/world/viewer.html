@@ -1,9 +1,10 @@
 <!doctype html>
-<!-- Ported from nyc-world by menonsprithvi-web (index.html), nearly verbatim.
+<!-- Ported from nyc-world by menonsprithvi-web (index.html @ e4c0f97), nearly verbatim.
      Agent Research changes: the world and its labels come from the chat's World
-     Labs record (/api/world/chat/<chatId>), labels are saved back there, the chat
-     panel asks /api/world/ask, other sites are fetched by /api/world/page, and
-     Escape (when it is not releasing the mouse) asks the app to close the view. -->
+     Labs record (/api/world/chat/<chatId>), labels are saved back there, a label's
+     own research source is pinned first on its screens, the routes live under
+     /api/world/ (ask, page, sources, read, status), and Escape (when it is not
+     releasing the mouse) asks the app to close the view. -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -103,6 +104,11 @@
     .tile .back { flex: none; height: 40px; padding: 0 16px 0 10px; border-radius: 20px; display: flex; align-items: center; gap: 6px;
                   background: var(--surface-high); color: var(--on-surface); font: 500 16px var(--font); transition: background .12s; }
     .tile .back .icon { font-size: 20px; }
+    .tile .trust { flex: none; height: 32px; padding: 0 12px; border-radius: 16px; display: flex; align-items: center; gap: 6px;
+                   font: 500 15px var(--font); background: var(--surface-highest); color: var(--on-surface); white-space: nowrap; }
+    .tile .trust b { font-weight: 700; }
+    .tile .trust.hi { background: #0f5223; color: #c4f5cf; }
+    .tile .trust.mid { background: #5a4500; color: #ffe08a; }
     .tile .back.hover { background: var(--primary); color: var(--on-primary); }
     .tile .back[hidden] { display: none; }
     .tile .panel { position: absolute; left: 0; right: 0; top: 72px; bottom: 0; border-radius: var(--radius-panel);
@@ -329,6 +335,26 @@
       return m && !/^[A-Za-z_]+:/.test(decodeURIComponent(m[1])) ? decodeURIComponent(m[1]) : null;
     };
 
+    // Telem: auto-routed web search, filtered to trustworthy sources on the
+    // server. Returns URLs plus a summary of what Telem did.
+    let telemOn = null;
+    async function searchTrustedWeb(query) {
+      if (telemOn === null) telemOn = await fetch("/api/world/status").then((r) => r.json()).then((j) => !!j.telem).catch(() => false);
+      if (!telemOn) return { urls: [], meta: null };
+      try {
+        const res = await fetch("/api/world/sources?q=" + encodeURIComponent(query));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        for (const r of data.results) {
+          trustInfo.set(r.url, { label: r.trust.label, score: r.trust.score, provider: r.provider });
+          titleCache.set(r.url, r.title);
+        }
+        return { urls: data.results.map((r) => r.url), meta: data };
+      } catch (e) {
+        return { urls: [], meta: { error: String(e.message ?? e) } };
+      }
+    }
+
     async function searchWiki(query, limit = 6) {
       const api = "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*" +
         `&srlimit=${limit + 2}&srsearch=` + encodeURIComponent(query);
@@ -403,9 +429,53 @@
       };
     }
 
+    // Minimal, escaped Markdown → HTML for Telem Fetch content.
+    function mdToHtml(md) {
+      const inline = (t) => esc(t)
+        .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+        .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, href) => `<a href="${href.replace(/&amp;/g, "&").replace(/"/g, "%22")}">${txt}</a>`);
+      const out = [];
+      let list = false;
+      for (const raw of md.split(/\n/)) {
+        const line = raw.trimEnd();
+        const h = line.match(/^(#{1,4})\s+(.*)/);
+        const li = line.match(/^\s*[-*+]\s+(.*)/);
+        if (!li && list) { out.push("</ul>"); list = false; }
+        if (h) out.push(`<h${Math.min(4, h[1].length + 1)}>${inline(h[2])}</h${Math.min(4, h[1].length + 1)}>`);
+        else if (li) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(li[1])}</li>`); }
+        else if (line.trim() && !/^!\[/.test(line.trim())) out.push(`<p>${inline(line)}</p>`);
+      }
+      if (list) out.push("</ul>");
+      return out.join("\n");
+    }
+
+    async function readWithTelem(pageUrl) {
+      const res = await fetch("/api/world/read?url=" + encodeURIComponent(pageUrl));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const host = new URL(data.url).hostname.replace(/^www\./, "");
+      return {
+        title: data.title || titleCache.get(pageUrl) || host,
+        html: `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(data.url)}"><style>${READER_CSS}</style></head>
+          <body><div class="chips"><span class="chip">${esc(host)}</span><span class="chip">${esc(data.trust.label)}</span><span class="chip oa">Read via Telem</span></div>
+          ${mdToHtml(data.content)}
+          <p class="source">Source: <a href="${esc(data.url)}">${esc(data.url)}</a></p></body></html>`,
+      };
+    }
+
     async function fetchPageHtml(pageUrl) {
       const work = oaId(pageUrl);
       if (work) return paperHtml(work);
+      if (!wikiTitle(pageUrl)) {
+        // Our own reader first; if the site blocks it or yields little text, use Telem Fetch.
+        try {
+          const page = await ownReader(pageUrl);
+          if (page.textLength >= 400 || !telemOn) return page;
+        } catch (e) {
+          if (!telemOn) throw e;
+        }
+        return readWithTelem(pageUrl);
+      }
       const title = wikiTitle(pageUrl);
       if (title) {
         const api = "https://en.wikipedia.org/w/api.php?action=parse&format=json&formatversion=2&origin=*" +
@@ -419,8 +489,12 @@
             `<p class="source">From Wikipedia, the free encyclopedia (CC BY-SA 4.0).</p></body></html>`,
         };
       }
-      // Any other site: the local server fetches it (browsers block most
-      // cross-site fetches); we keep just the main content, without scripts.
+      return ownReader(pageUrl);
+    }
+
+    // Any other site: the local server fetches it (browsers block most
+    // cross-site fetches); we keep just the main content, without scripts.
+    async function ownReader(pageUrl) {
       const res = await fetch("/api/world/page?url=" + encodeURIComponent(pageUrl));
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const finalUrl = res.headers.get("x-final-url") || pageUrl;
@@ -451,6 +525,7 @@
       const pageTitle = doc.querySelector("h1")?.textContent.trim() || doc.title || pageUrl;
       const host = new URL(finalUrl).hostname.replace(/^www\./, "");
       return {
+        textLength: (main?.textContent ?? "").replace(/\s+/g, " ").trim().length,
         title: pageTitle,
         html: `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(finalUrl)}"><style>${READER_CSS}</style></head>
           <body><div class="chips"><span class="chip">${esc(host)}</span></div>${main?.innerHTML ?? ""}
@@ -458,11 +533,31 @@
       };
     }
 
+    // Why each source was chosen (filled by Telem results; derived otherwise).
+    const trustInfo = new Map(); // url → { label, score, provider? }
+    function trustFor(u) {
+      if (!u) return null;
+      if (trustInfo.has(u)) return trustInfo.get(u);
+      if (oaId(u)) return { label: "Scholarly · OpenAlex", score: 0.8 };
+      if (wikiTitle(u)) return { label: "Encyclopedia (cited)", score: 0.8 };
+      return null;
+    }
+    function showTrust(t, u) {
+      const info = trustFor(u);
+      t.trustEl.hidden = !info;
+      if (!info) return;
+      const pct = Math.round(info.score * 100);
+      t.trustEl.className = "trust " + (info.score >= 0.85 ? "hi" : info.score >= 0.7 ? "" : "mid");
+      t.trustEl.innerHTML = `${esc(info.label)} · <b>${pct}</b>`;
+      t.trustEl.title = info.provider ? `Found via Telem (${info.provider})` : "";
+    }
+
     const niceTitle = (u) => titleCache.get(u) ?? (oaId(u) ? "Paper" : decodeURIComponent((wikiTitle(u) ?? u).replace(/_/g, " ")));
 
     async function loadPage(t, pageUrl, { push = true } = {}) {
       if (push && t.current) t.history.push(t.current);
       t.current = pageUrl;
+      showTrust(t, pageUrl);
       t.backBtn.hidden = t.history.length === 0;
       t.titleEl.textContent = "Loading…";
       try {
@@ -606,7 +701,10 @@
       const num = document.createElement("span");
       num.className = "num";
       num.textContent = String(index + 1); // screen number, so you and the chat can refer to it
-      bar.append(num, backBtn, titleEl);
+      const trustEl = document.createElement("span");
+      trustEl.className = "trust";
+      trustEl.hidden = true;
+      bar.append(num, trustEl, backBtn, titleEl);
       const frame = document.createElement("iframe");
       // Same-origin (srcdoc) but no scripts: we can drive it, it can't run code.
       frame.setAttribute("sandbox", "allow-same-origin");
@@ -620,7 +718,7 @@
       const obj = new CSS3DObject(el);
       obj.scale.setScalar(TILE_WM / TILE_W); // CSS px → metres
       cssScene.add(obj);
-      return { kind: "tile", el, obj, owner: item, index, frame, backBtn, closeBtn, titleEl, open: true, history: [], current: null, url: null };
+      return { kind: "tile", el, obj, owner: item, index, frame, backBtn, closeBtn, titleEl, trustEl, open: true, history: [], current: null, url: null };
     }
 
     function makeMenu(item) {
@@ -652,21 +750,25 @@
     }
 
     async function fillTiles(item, query) {
-      // The label's own research sources go first (then encyclopedia / papers).
+      // The label's own research source goes first (then Telem's trusted web, encyclopedia, papers).
       const own = (item.data.sources ?? []).filter((s) => /^https?:\/\//.test(s?.url ?? ""));
-      for (const s of own) if (s.title) titleCache.set(s.url, s.title);
-      const pinned = item.cluster.firstFill ? [item.data.url, ...own.map((s) => s.url)].filter(Boolean).slice(0, 3) : [];
+      for (const s of own) if (s.title && !titleCache.has(s.url)) titleCache.set(s.url, s.title);
+      const pinned = item.cluster.firstFill ? [item.data.url, own[0]?.url].filter(Boolean).slice(0, 1) : [];
       item.cluster.firstFill = false;
       let found = [];
       // Interleave encyclopedia articles (Wikipedia, with its citations) and
       // scholarly papers (OpenAlex), topping up from whichever has more.
-      const [wiki, papers] = await Promise.all([
+      const [wiki, papers, web] = await Promise.all([
         searchWiki(query, 6).catch(() => []),
         searchScholar(query, 6).catch(() => []),
+        searchTrustedWeb(query),
       ]);
+      item.cluster.lastSearch = web.meta;
       // Order: pinned, then alternate encyclopedia / paper, then the rest.
       // Skip repeats by title (OpenAlex sometimes lists one paper twice).
-      const order = [...pinned];
+      // Up to 4 trusted web sources from Telem, then encyclopedia + papers so
+      // every set keeps at least one cited article and one paper.
+      const order = [...pinned, ...web.urls.slice(0, 4)];
       for (let i = 0; i < 3; i++) order.push(wiki[i], papers[i]);
       order.push(...wiki.slice(3), ...papers.slice(3));
       const seen = new Set();
@@ -820,8 +922,19 @@
       item.cluster = c;
       placeGroup(c);
       updateCloseHud();
-      botSay(item, `Showing pages about “${item.data.query ?? item.data.text}”. Ask me anything about them.`);
-      fillTiles(item, item.data.query ?? item.data.text);
+      botSay(item, `Searching for trustworthy sources about “${item.data.query ?? item.data.text}”…`);
+      fillTiles(item, item.data.query ?? item.data.text).then(() => {
+        const m = item.cluster?.lastSearch;
+        if (!item.cluster) return;
+        if (m?.results) {
+          const dropped = m.dropped.length
+            ? ` Dropped ${m.dropped.length} untrusted (${[...new Set(m.dropped.map((d) => d.label))].join(", ")}).` : "";
+          botSay(item, `Telem routed this search to ${m.providers.join(" + ")} (${(m.ms / 1000).toFixed(1)}s) and found ${m.total} results; ` +
+            `kept ${m.results.length} trustworthy ones.${dropped} Each screen's badge shows its source type and trust score. Ask me anything about them.`);
+        } else {
+          botSay(item, `Showing encyclopedia articles and papers about “${item.data.query ?? item.data.text}”. Ask me anything about them.`);
+        }
+      });
     }
 
     // Horizontal unit direction from `from` to `to` (or `fallback` if too close).
