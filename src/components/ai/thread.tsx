@@ -38,7 +38,7 @@
  *   Reduced motion never glides.
  */
 
-import { Scale, Wrench } from "lucide-react";
+import { BookOpen, Scale, Wrench } from "lucide-react";
 import {
   AnimatePresence,
   animate,
@@ -203,7 +203,12 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
  * hosts for a page read — cut to one line. It pulses while the call runs.
  */
 function ToolRow({ call }: { call: ToolCall }) {
-  const detail = call.action === "read" ? `Reading ${call.query}` : call.query;
+  const vault = call.action === "vault" || call.name === "Vault";
+  const detail = vault
+    ? `${call.op === "read" ? "Reading" : call.op === "write" ? "Saved" : "Searching"} ${call.query}`
+    : call.action === "read"
+      ? `Reading ${call.query}`
+      : call.query;
   return (
     <div
       data-ai="tool"
@@ -217,6 +222,9 @@ function ToolRow({ call }: { call: ToolCall }) {
       {/* a cross-reference weighs the sources against each other */}
       {call.action === "crossref" || call.name === "Cross-reference" ? (
         <Scale aria-hidden data-icon="scale" size={14} className="shrink-0 text-[var(--ai-muted)]" />
+      ) : vault ? (
+        /* notes kept from earlier research */
+        <BookOpen aria-hidden data-icon="book-open" size={14} className="shrink-0 text-[var(--ai-muted)]" />
       ) : (
         <Wrench aria-hidden size={14} className="shrink-0 text-[var(--ai-muted)]" />
       )}

@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 out/
+
+# research vault (private notes; the repo is public)
+/vault/

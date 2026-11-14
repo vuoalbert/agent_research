@@ -1,4 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { __setSeedForTests, type SeedChat } from "@/lib/agent-store";
+
+// the chat route writes researched turns to the vault: never the repo's own in tests
+process.env.VAULT_DIR = mkdtempSync(join(tmpdir(), "agent-research-vault-"));
 
 /**
  * Sample conversations for the AI tests. The app itself starts with no chats;

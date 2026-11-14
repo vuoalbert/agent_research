@@ -88,7 +88,7 @@ describe("POST /api/chat", () => {
     await readAll(response);
   });
 
-  it("asks Opus 5.5 at high effort, with only Tavily search, read and cross_reference and no repo settings", async () => {
+  it("asks Opus 5.5 at high effort, with only Tavily search, read, cross_reference and the vault, and no repo settings", async () => {
     query.mockReturnValue(stream(delta("x")));
     await readAll(await post({ messages: [{ role: "user", content: "hi" }] }));
 
@@ -107,14 +107,20 @@ describe("POST /api/chat", () => {
       "tavily_search",
       "tavily_extract",
       "cross_reference",
+      "vault_search",
+      "vault_read",
+      "vault_write",
     ]);
     expect(options.allowedTools).toEqual([
       "mcp__research__tavily_search",
       "mcp__research__tavily_extract",
       "mcp__research__cross_reference",
+      "mcp__research__vault_search",
+      "mcp__research__vault_read",
+      "mcp__research__vault_write",
     ]);
     expect(options.permissionMode).toBe("dontAsk");
-    expect(options.maxTurns).toBe(14);
+    expect(options.maxTurns).toBe(16);
     expect(options.includePartialMessages).toBe(true);
     // a single-turn ask goes over as itself, with no transcript preamble
     expect(prompt).toBe("hi");

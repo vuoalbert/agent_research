@@ -1,8 +1,11 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+import { createTurnRecorder } from "@/server/vault/turn";
+
 import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
 import { parseSources } from "./sources";
 import { EXTRACT_TOOL_ID, TAVILY_SERVER, TAVILY_TOOL_ID, createTavilyServer, type Source } from "./tavily";
+import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
 
 const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
 
@@ -17,7 +20,8 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  * only works locally and why a deploy of this route would need rethinking.
  *
  * Request:  { messages: { role: "user" | "assistant", content: string }[],
- *            sources?: { title: string, url: string }[] }   (the chat's sources, for cross_reference)
+ *            sources?: { title: string, url: string }[],   (the chat's sources, for cross_reference)
+ *            chatId?: string }                             (names the turn's Research note in the vault)
  * Response: text/event-stream of
  *             event: delta   data: {"text": "..."}
  *             event: tool    data: {"id","name":"Tavily","action"?:"read","query","status":"running"}
@@ -25,6 +29,7 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  *                            data: {"id","status":"error","message"}
  *                            data: {"id","name":"Cross-reference","action":"crossref","query","status":"running"}
  *                              → {"id","status":"done","crossref":{"claims","relations"}}
+ *                            data: {"id","name":"Vault","action":"vault","op":"search"|"read"|"write","query","status":"running"}
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -32,6 +37,9 @@ const CROSSREF_TOOL_ID = `mcp__${TAVILY_SERVER}__${CROSSREF_TOOL}`;
  * single prompt. The SDK's `query()` is a fresh session per call — it has no
  * memory of previous requests — so the conversation has to travel in the
  * prompt, the same way it would with the Messages API.
+ *
+ * A turn that researched (searched, read or cross-referenced) is written to the
+ * vault once its stream has closed — see `src/server/vault/`.
  */
 
 export const runtime = "nodejs";
@@ -44,7 +52,7 @@ const MODEL = "claude-opus-5-5";
 const EFFORT = "high" as const;
 const MAX_TURNS_OF_HISTORY = 30;
 /** enough for a few searches, a couple of reads, and the answer after them */
-const MAX_AGENT_TURNS = 14;
+const MAX_AGENT_TURNS = 16;
 const SYSTEM_PROMPT = [
   "You are Agent Research, an AI assistant. Be concise.",
   "",
@@ -59,6 +67,13 @@ const SYSTEM_PROMPT = [
   "Cite inline by source name with a link, e.g. [Microsoft](https://news.microsoft.com/...).",
   "Do not mention how many sources you read or searches you ran.",
   "Keep the answer natural and to the point. Questions that don't need outside facts get a direct answer, no research.",
+  "",
+  "You have a research vault: Markdown notes kept from earlier research (Research answers, Sources, cross-referenced Claims).",
+  "Before researching the web, call vault_search for the topic. If the vault already covers the question well and it is not time-sensitive,",
+  "read the relevant notes with vault_read and answer from them. Cite each fact with its note and the note's original source link,",
+  "e.g. [[Note title]] ([GamesRadar+](https://www.gamesradar.com/...)) — a Source note's url is in its frontmatter, a Research note lists its sources' urls;",
+  "search the web only for what is missing or stale (check the notes' updated dates).",
+  "When the user asks you to save or remember something, save it with vault_write.",
 ].join("\n");
 
 type Turn = { role: "user" | "assistant"; content: string };
@@ -91,8 +106,9 @@ function buildPrompt(turns: Turn[]): string {
 export async function POST(request: Request) {
   let turns: Turn[];
   let chatSources: Source[];
+  let chatId: string | undefined;
   try {
-    const body = (await request.json()) as { messages?: unknown; sources?: unknown };
+    const body = (await request.json()) as { messages?: unknown; sources?: unknown; chatId?: unknown };
     const messages = Array.isArray(body.messages) ? body.messages.filter(isTurn) : [];
     if (messages.length === 0) {
       return Response.json({ error: "messages must be a non-empty array" }, { status: 400 });
@@ -103,6 +119,7 @@ export async function POST(request: Request) {
     }
     turns = messages;
     chatSources = sources;
+    if (typeof body.chatId === "string" && body.chatId.length <= 200) chatId = body.chatId;
   } catch {
     return Response.json({ error: "invalid JSON body" }, { status: 400 });
   }
@@ -119,7 +136,11 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // what this turn's research found, for the vault once the turn is over
+      const turn = createTurnRecorder({ chatId, question: turns[turns.length - 1].content, knownSources: chatSources });
+      let answer = "";
       const report = (activity: unknown) => {
+        turn.recordActivity(activity);
         if (!abort.signal.aborted) send(controller, "tool", activity);
       };
       // the sources cross_reference checks: the chat's, then this request's finds
@@ -140,11 +161,17 @@ export async function POST(request: Request) {
             settingSources: [],
             mcpServers: {
               [TAVILY_SERVER]: createTavilyServer(report, {
-                onPages: log.recordPages,
-                tools: [createCrossReferenceTool({ log, onActivity: report, signal: abort.signal })],
+                onPages: (pages) => {
+                  log.recordPages(pages);
+                  turn.recordPages(pages);
+                },
+                tools: [
+                  createCrossReferenceTool({ log, onActivity: report, signal: abort.signal }),
+                  ...createVaultTools({ onActivity: report }),
+                ],
               }),
             },
-            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID],
+            allowedTools: [TAVILY_TOOL_ID, EXTRACT_TOOL_ID, CROSSREF_TOOL_ID, ...VAULT_TOOL_IDS],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
             includePartialMessages: true,
@@ -170,9 +197,9 @@ export async function POST(request: Request) {
               event.delta.type === "text_delta" &&
               event.delta.text
             ) {
-              send(controller, "delta", {
-                text: (breakBeforeNext ? "\n\n" : "") + event.delta.text,
-              });
+              const chunk = (breakBeforeNext ? "\n\n" : "") + event.delta.text;
+              answer += chunk;
+              send(controller, "delta", { text: chunk });
               sentText = true;
               breakBeforeNext = false;
             }
@@ -185,6 +212,9 @@ export async function POST(request: Request) {
 
         send(controller, "done", {});
         controller.close();
+        // after the stream: the reader never waits on the vault, and a failed
+        // write is logged by the recorder, never surfaced
+        if (!abort.signal.aborted) void turn.finish(answer);
       } catch (error) {
         // Surface the real reason — a missing Claude login shows up here, and
         // silently swapping in an API key would hide exactly the thing worth

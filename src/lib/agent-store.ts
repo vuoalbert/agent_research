@@ -59,9 +59,11 @@ export type Source = { title: string; url: string };
 export type ToolCall = {
   id: string;
   name: string;
-  /** "read" for a page read (tavily_extract), "crossref" for a cross_reference;
-   *  absent for a search, and on chats saved before reads */
-  action?: "read" | "crossref";
+  /** "read" for a page read (tavily_extract), "crossref" for a cross_reference,
+   *  "vault" for a vault search/read/write; absent for a search, and on chats saved before reads */
+  action?: "read" | "crossref" | "vault";
+  /** a vault call's kind, for its row's verb */
+  op?: "search" | "read" | "write";
   query: string;
   status: "running" | "done" | "error";
   sources?: Source[];
@@ -464,7 +466,7 @@ function setMessageContent(chatId: string, messageId: string, content: string) {
 
 /** the route's `tool` frame: a call starting, or one it started ending */
 type ToolEvent =
-  | { id: string; name: string; action?: ToolCall["action"]; query: string; status: "running" }
+  | { id: string; name: string; action?: ToolCall["action"]; op?: ToolCall["op"]; query: string; status: "running" }
   | { id: string; status: "done"; sources?: Source[]; crossref?: Crossref }
   | { id: string; status: "error" };
 
@@ -478,7 +480,8 @@ export function applyToolEvent(tools: readonly ToolCall[] | undefined, event: To
       {
         id: event.id,
         name: event.name,
-        ...(event.action === "read" || event.action === "crossref" ? { action: event.action } : {}),
+        ...(event.action === "read" || event.action === "crossref" || event.action === "vault" ? { action: event.action } : {}),
+        ...(event.op === "search" || event.op === "read" || event.op === "write" ? { op: event.op } : {}),
         query: event.query,
         status: "running",
       },
@@ -577,7 +580,7 @@ async function streamReply(chatId: string, replyId: string) {
     const response = await fetch(CHAT_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: history, sources }),
+      body: JSON.stringify({ messages: history, sources, chatId }),
       signal: controller.signal,
     });
     if (!response.ok || !response.body) throw new Error(`chat route returned ${response.status}`);
