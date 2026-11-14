@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 
 import { NO_SCROLLBAR } from "@/components/ai/tokens";
 import { TelemReader } from "@/components/telem-reader";
+import { useWatchUpdates } from "@/components/telem/use-watch";
 import { Button } from "@/components/ui/button";
 import {
   addFoundSources,
@@ -30,6 +31,10 @@ import { cn } from "@/lib/utils";
  * fills the panel and only the list below it scrolls (scrollbar hidden), with
  * shadcn's `scroll-fade-y` mask fading whichever edge has more list beyond it. Sources only: claims
  * live in References (the vault's Claims/ notes) and the Force graph.
+ *
+ * After the chat's own sources come the ones its Telem monitors found since
+ * (src/components/telem/use-watch.ts), each marked "New" until the chat's
+ * watch is next seen.
  */
 
 /** a URL's host without the `www.`, or the URL itself if it does not parse */
@@ -92,10 +97,13 @@ function SourceRow({
   source,
   origin,
   onOpen,
+  fresh = false,
 }: {
   source: Source;
   origin?: "graph" | "kb";
   onOpen: (source: Source) => void;
+  /** a source a Telem monitor just found, not seen yet */
+  fresh?: boolean;
 }) {
   const host = hostOf(source.url);
   return (
@@ -110,6 +118,11 @@ function SourceRow({
       >
         <Favicon host={host} />
         <span className="min-w-0 truncate text-[14px] leading-5 text-plane-ink">{source.title}</span>
+        {fresh && (
+          <span data-kb-new="" className="ml-auto shrink-0 text-[11px] leading-4 font-medium text-plane-brand">
+            New
+          </span>
+        )}
         {origin && (
           <span
             data-source-origin={origin}
@@ -146,8 +159,20 @@ type FindState = { status: "idle" } | { status: "pending" } | { status: "done"; 
 export function KnowledgeBase({ titleId }: { titleId: string }) {
   const { activeChatId, messages, chats } = useAgentStore();
   const turns = activeChatId ? messages[activeChatId] : undefined;
-  const sources = useMemo(() => selectChatSources(turns), [turns]);
+  const own = useMemo(() => selectChatSources(turns), [turns]);
   const origins = useMemo(() => selectSourceOrigins(turns), [turns]);
+  const { updates } = useWatchUpdates(activeChatId);
+  const { sources, fresh } = useMemo(() => {
+    const seen = new Set(own.map((source) => sourceKey(source.url)));
+    const watched: Source[] = [];
+    for (const source of updates?.sources ?? []) {
+      const key = sourceKey(source.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      watched.push({ title: source.title, url: source.url });
+    }
+    return { sources: [...own, ...watched], fresh: new Set(updates?.fresh.sources ?? []) };
+  }, [own, updates]);
   const count = sources.length;
   const chat = chats.find((c) => c.id === activeChatId);
   const topic = chatTopic(turns, chat?.title);
@@ -293,6 +318,7 @@ export function KnowledgeBase({ titleId }: { titleId: string }) {
                 source={source}
                 origin={origins.get(sourceKey(source.url))}
                 onOpen={(picked) => setReading({ source: picked, chatId: activeChatId })}
+                fresh={fresh.has(source.url)}
               />
             ))}
           </ul>

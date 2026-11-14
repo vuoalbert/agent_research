@@ -2,12 +2,14 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 
 import { createLineage } from "@/server/telem/client";
 import { recordClaudeResult, recordJob } from "@/server/telem/usage";
+import { autoWatch } from "@/server/telem/watch";
 import { createTurnRecorder } from "@/server/vault/turn";
 
 import { CROSSREF_TOOL, createCrossReferenceTool, createResearchLog } from "./cross-reference";
 import { parseSources } from "./sources";
 import { SUBAGENTS_TOOL_ID, createSubagentsTool } from "./subagents";
 import { RESEARCH_SERVER, WEB_READ_TOOL_ID, WEB_SEARCH_TOOL_ID, createWebServer, type PageSeen, type Source } from "./web-tools";
+import { TELEM_WATCH_PROMPT, TELEM_WATCH_SERVER, TELEM_WATCH_TOOL_IDS, createTelemWatchServer } from "./telem-watch-tools";
 import { VAULT_TOOL_IDS, createVaultTools } from "./vault-tools";
 import {
   MESSAGE_VISUALIZE_TOOL_ID,
@@ -54,6 +56,8 @@ const CROSSREF_TOOL_ID = `mcp__${RESEARCH_SERVER}__${CROSSREF_TOOL}`;
  *                                  see visualize-message-tool.ts)
  *                            data: {"id","name":"World Labs","action":"world","query","chatId","status":"running"} → {"id","status":"done"}
  *                                  (a chat's FIRST research turn starts its one World Labs world; see world-turn.ts)
+ *                            data: {"id","name":"Telem","action":"watch","query":"Watching <topic>","status":"running"}
+ *                                  (a Telem Monitors tool call; see telem-watch-tools.ts)
  *             event: done    data: {}
  *             event: error   data: {"message": "..."}
  *
@@ -222,7 +226,7 @@ export async function POST(request: Request) {
             model: MODEL,
             effort: EFFORT,
             thinking: { type: "adaptive" },
-            systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}\n${VISUALIZE_MESSAGE_PROMPT}`,
+            systemPrompt: `${SYSTEM_PROMPT}\n\n${VISUALIZE_PROMPT}\n${VISUALIZE_MESSAGE_PROMPT}\n\n${TELEM_WATCH_PROMPT}`,
             // No built-in tools and no filesystem settings: `tools: []` turns the
             // built-ins off and `settingSources: []` keeps the repo's CLAUDE.md
             // and hooks out. The tools are Telem search and read, pre-approved;
@@ -249,6 +253,7 @@ export async function POST(request: Request) {
                 ],
               }),
               [VISUALIZE_SERVER]: visualize.server,
+              [TELEM_WATCH_SERVER]: createTelemWatchServer({ chatId, onActivity: report, signal: abort.signal }),
             },
             allowedTools: [
               WEB_SEARCH_TOOL_ID,
@@ -259,6 +264,7 @@ export async function POST(request: Request) {
               VISUALIZE_TOOL_ID,
               MESSAGE_VISUALIZE_TOOL_ID,
               VISUALIZE_STATUS_TOOL_ID,
+              ...TELEM_WATCH_TOOL_IDS,
             ],
             permissionMode: "dontAsk",
             maxTurns: MAX_AGENT_TURNS,
@@ -312,6 +318,8 @@ export async function POST(request: Request) {
         // after the stream: the reader never waits on the vault, and a failed
         // write is logged by the recorder, never surfaced
         if (!abort.signal.aborted) void turn.finish(answer);
+        // a chat's first research turn starts a daily Telem monitor on its question
+        if (!abort.signal.aborted && turn.researched) void autoWatch({ chatId, question });
       } catch (error) {
         // Surface the real reason — a missing Claude login shows up here, and
         // silently swapping in an API key would hide exactly the thing worth

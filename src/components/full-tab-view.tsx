@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 
 import { ForceGraphView } from "@/components/force-graph-view";
 import { useTabView } from "@/components/tab-view-context";
+import { TelemView } from "@/components/telem/telem-view";
 import { VisualizeView } from "@/components/visualize/visualize-view";
 import { WorldView } from "@/components/worlds/world-view";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * FullTabView — the full-width page a "full" side tab (World Labs, Force
- * graph, Visualize) opens instead of a side panel. The shell places this host over the
+ * graph, Visualize, Telem) opens instead of a side panel. The shell places this host over the
  * sidebar card and the chat card together (grid columns 2–3, row 2, pulled
  * 1px left onto the sidebar card's x=60 seam), above the side tabs and the
  * composer. The page keeps the cards' 8px gutters right and below, and their
@@ -103,6 +104,7 @@ export function FullTabView({ className }: { className?: string }) {
               {view === "Force graph" && <ForceGraphView className="absolute inset-0" />}
               {view === "Visualize" && <VisualizeView className="absolute inset-0" />}
               {view === "World Labs" && <WorldView className="absolute inset-0 size-full" />}
+              {view === "Telem" && <TelemView className="absolute inset-0" />}
               <Button
                 ref={backRef}
                 variant="ghost"

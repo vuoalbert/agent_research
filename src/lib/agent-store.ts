@@ -64,9 +64,9 @@ export type ToolCall = {
   /** "read" for a page read (web_read; tavily_extract on older chats), "crossref" for a cross_reference,
    *  "vault" for a vault search/read/write, "visualize" for a figure job, "visualize-message"
    *  for a message to the agent building one, "subagents" for a deploy_subagents group,
-   *  "world" for the chat's World Labs world; absent for a search, and on chats saved
+   *  "world" for the chat's World Labs world, "watch" for a Telem Monitors call; absent for a search, and on chats saved
    *  before reads */
-  action?: "read" | "crossref" | "vault" | "visualize" | "visualize-message" | "subagents" | "world";
+  action?: "read" | "crossref" | "vault" | "visualize" | "visualize-message" | "subagents" | "world" | "watch";
   /** a vault call's kind, for its row's verb */
   op?: "search" | "read" | "write";
   /** a Visualize call's background job, which the row follows after the call itself is done */
@@ -101,6 +101,7 @@ const ACTIONS: readonly NonNullable<ToolCall["action"]>[] = [
   "visualize-message",
   "subagents",
   "world",
+  "watch",
 ];
 
 export type Message = {

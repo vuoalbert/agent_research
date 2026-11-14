@@ -52,17 +52,17 @@ export function inlineQuote(text: string, max = 220): string {
 
 /** --------------------------------------------------------------- session */
 
-type Allocation = { title: string; abs: string; existing?: VaultNote };
+export type Allocation = { title: string; abs: string; existing?: VaultNote };
 
 /** one pass of writes over a snapshot of the vault: names are allocated vault-wide unique */
-function openSession(notes: VaultNote[], dir: string) {
+export function openSession(notes: VaultNote[], dir: string) {
   const taken = new Set(notes.map((note) => note.title.toLowerCase()));
   const byKey = new Map<string, Allocation>();
   for (const note of notes) {
     if (note.type && note.key) byKey.set(`${note.type}\u0000${note.key}`, { title: note.title, abs: note.abs, existing: note });
   }
   return {
-    allocate(folder: Folder, type: string, key: string, title: string): Allocation {
+    allocate(folder: Folder | "Watch", type: string, key: string, title: string): Allocation {
       const id = `${type}\u0000${key}`;
       const known = byKey.get(id);
       if (known) return known;
@@ -87,7 +87,7 @@ type Upsert = {
 };
 
 /** merge one note's managed parts into whatever is on disk; skips the write when nothing changed */
-async function upsert(allocation: Allocation, update: Upsert): Promise<boolean> {
+export async function upsert(allocation: Allocation, update: Upsert): Promise<boolean> {
   const block = update.block ?? AUTO_BLOCK;
   const previous = allocation.existing?.text ?? "";
   const { frontmatter, body } = splitNote(previous);
@@ -118,7 +118,7 @@ async function upsert(allocation: Allocation, update: Upsert): Promise<boolean> 
   return true;
 }
 
-const relOf = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join("/");
+export const relOf = (root: string, abs: string) => path.relative(root, abs).split(path.sep).join("/");
 
 /** ------------------------------------------------------------ research turn */
 

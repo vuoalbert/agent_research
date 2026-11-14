@@ -109,7 +109,7 @@ describe("POST /api/chat", () => {
     // no built-ins; the one MCP tool pre-approved, everything else denied
     expect(options.tools).toEqual([]);
     expect(options.settingSources).toEqual([]);
-    expect(Object.keys(options.mcpServers)).toEqual(["research", "visualize"]);
+    expect(Object.keys(options.mcpServers)).toEqual(["research", "visualize", "telem_watch"]);
     expect(options.mcpServers.research.tools.map((t: { name: string }) => t.name)).toEqual([
       "web_search",
       "web_read",
@@ -130,6 +130,12 @@ describe("POST /api/chat", () => {
       "mcp__visualize__visualize",
       "mcp__visualize__message_visualize",
       "mcp__visualize__visualize_status",
+      "mcp__telem_watch__watch_topic",
+      "mcp__telem_watch__monitor_status",
+      "mcp__telem_watch__ask_monitor",
+      "mcp__telem_watch__pause_monitor",
+      "mcp__telem_watch__resume_monitor",
+      "mcp__telem_watch__run_monitor_now",
     ]);
     expect(options.permissionMode).toBe("dontAsk");
     expect(options.maxTurns).toBe(16);
