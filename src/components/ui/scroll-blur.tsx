@@ -27,6 +27,8 @@ export interface ScrollBlurProps extends ComponentPropsWithRef<"div"> {
   viewportClassName?: string;
   viewportLabel?: string;
   viewportProps?: ScrollBlurViewportProps;
+  /** height of each edge fade in px (default 2: a hairline blur) */
+  fadeSize?: number;
 }
 
 /**
@@ -42,6 +44,7 @@ export function ScrollBlur({
   viewportClassName,
   viewportLabel,
   viewportProps,
+  fadeSize = 2,
   ...props
 }: ScrollBlurProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -133,7 +136,8 @@ export function ScrollBlur({
         <div
           aria-hidden="true"
           data-scroll-blur-edge="top"
-          className="pointer-events-none absolute inset-x-0 top-0 z-20 h-[2px] bg-[linear-gradient(to_bottom,rgba(255,255,255,0.78),rgba(255,255,255,0))] backdrop-blur-[2px] [mask-image:linear-gradient(to_bottom,black,transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black,transparent)]"
+          style={{ height: fadeSize }}
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.78),rgba(255,255,255,0))] backdrop-blur-[2px] [mask-image:linear-gradient(to_bottom,black,transparent)] [-webkit-mask-image:linear-gradient(to_bottom,black,transparent)]"
         />
       ) : null}
 
@@ -141,7 +145,8 @@ export function ScrollBlur({
         <div
           aria-hidden="true"
           data-scroll-blur-edge="bottom"
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[2px] bg-[linear-gradient(to_top,rgba(255,255,255,0.78),rgba(255,255,255,0))] backdrop-blur-[2px] [mask-image:linear-gradient(to_top,black,transparent)] [-webkit-mask-image:linear-gradient(to_top,black,transparent)]"
+          style={{ height: fadeSize }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-[linear-gradient(to_top,rgba(255,255,255,0.78),rgba(255,255,255,0))] backdrop-blur-[2px] [mask-image:linear-gradient(to_top,black,transparent)] [-webkit-mask-image:linear-gradient(to_top,black,transparent)]"
         />
       ) : null}
     </div>

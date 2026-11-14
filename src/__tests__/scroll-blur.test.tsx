@@ -106,7 +106,7 @@ describe("ScrollBlur", () => {
     expect(
       container.querySelector('[data-scroll-blur-edge="bottom"]'),
     ).not.toBeNull();
-    expect(topEdge.className).toContain("h-[2px]");
+    expect(topEdge.style.height).toBe("2px");
     expect(topEdge.className).toContain(
       "bg-[linear-gradient(to_bottom,rgba(255,255,255,0.78),rgba(255,255,255,0))]",
     );
