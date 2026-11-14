@@ -57,7 +57,7 @@ export const MAX_FIGURE_BYTES = 15 * 1024 * 1024;
 
 export class StudioNotReadyError extends Error {
   constructor() {
-    super("Visualize isn't set up on this machine: run `npm run setup:visualize` first.");
+    super("Visualize isn't set up on this machine yet: run `npm run setup:visualize` (or restart `npm run dev`, which sets it up), then try again.");
   }
 }
 

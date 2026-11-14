@@ -24,6 +24,10 @@
  *
  * Re-running is safe: a copy already at the pinned commit is re-checked, not
  * fetched again. `--force` fetches it fresh.
+ *
+ * `npm run dev` runs this first (`predev`) with `--soft`, so a fresh clone sets
+ * Visualize up by itself: with `--soft` a failure (offline, no git) is only a
+ * warning, and the dev server still starts; the rest of the app works without it.
  */
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -75,6 +79,18 @@ exec "\${ANATOMY_REAL_CHROME:?ANATOMY_REAL_CHROME is not set}" --no-sandbox --di
 `;
 
 const force = process.argv.includes("--force");
+const soft = process.argv.includes("--soft");
+
+/** with --soft (the predev hook) a failed setup warns and lets the dev server start anyway */
+function fail(message) {
+  if (soft) {
+    console.warn(`\nVisualize could not be set up (${message}). The rest of the app works; run \`npm run setup:visualize\` to retry.\n`);
+    process.exit(0);
+  }
+  console.error(`setup:visualize failed: ${message}`);
+  process.exit(1);
+}
+process.on("uncaughtException", (error) => fail(error instanceof Error ? error.message.split("\n")[0] : String(error)));
 
 /** git with no hooks, no prompts, no credential helper and no local-file transport */
 function git(cwd, ...args) {
@@ -149,9 +165,6 @@ chmodSync(CHROME, 0o755);
 mkdirSync(join(STUDIO, "jobs"), { recursive: true });
 
 const problems = check();
-if (problems.length > 0) {
-  console.error(`setup:visualize failed: ${problems.join("; ")}`);
-  process.exit(1);
-}
+if (problems.length > 0) fail(problems.join("; "));
 console.log(`Removed from the copy: ${REMOVED.join(", ")}`);
 console.log(`Studio ready: ${STUDIO}`);
