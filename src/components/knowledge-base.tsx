@@ -96,7 +96,7 @@ function SourceRow({ source }: { source: Source }) {
   );
 }
 
-/** one host chip under a claim: ✓ neutral grey, ✗ a faint red; the quote on hover */
+/** one host chip under a claim: ✓ neutral grey, ✗ solid red; the quote on hover */
 function StanceChip({ source }: { source: ClaimSource }) {
   const host = hostOf(source.url);
   const against = source.stance === "contradicts";
@@ -106,7 +106,7 @@ function StanceChip({ source }: { source: ClaimSource }) {
       title={source.quote ? `“${source.quote}”\n${host}` : host}
       className={cn(
         "inline-flex h-5 max-w-full min-w-0 items-center gap-1 rounded-[5px] px-1.5 text-[12px] leading-4",
-        against ? "bg-destructive/10 text-destructive" : "bg-plane-active text-plane-muted",
+        against ? "bg-[#DC2626] text-white" : "bg-plane-active text-plane-muted",
       )}
     >
       <span aria-hidden className="shrink-0">{against ? "✗" : "✓"}</span>
@@ -118,7 +118,7 @@ function StanceChip({ source }: { source: ClaimSource }) {
 
 /**
  * A claim a cross-reference found, with ✓ chips for the hosts that support it
- * and faint-red ✗ chips for those that contradict it (the quote on hover).
+ * and solid red ✗ chips for those that contradict it (the quote on hover).
  */
 function ClaimRow({ claim }: { claim: Claim }) {
   // "mentions" neither confirm nor deny, so they get no chip

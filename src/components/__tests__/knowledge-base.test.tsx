@@ -132,7 +132,7 @@ describe("Knowledge base panel", () => {
       ["contradicts", "✗Contradicts:en.wikipedia.org"],
     ]);
     expect(chips[1].getAttribute("title")).toBe("“released in 2026”\nen.wikipedia.org");
-    expect(chips[1].className).toContain("text-destructive");
+    expect(chips[1].className).toContain("bg-[#DC2626]");
     expect(chips[0].className).not.toContain("destructive");
     // the sources list follows, unchanged
     const list = within(panel).getByRole("list", { name: "Sources" });
