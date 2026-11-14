@@ -79,6 +79,7 @@ import { AiHeader } from "@/components/ai/ai-header";
 import { AiHomeCards } from "@/components/ai/home-cards";
 import { AiThread } from "@/components/ai/thread";
 import { DOCK_SWAP, NO_SCROLLBAR, PANE_TONES } from "@/components/ai/tokens";
+import { SIDE_PANEL_INSET } from "@/components/side-tabs";
 import { useAgentStore } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
 
@@ -184,7 +185,16 @@ export function AiPane() {
           moves when a chat opens. */}
       <AiHeader title={docked ? activeChat?.title : undefined} />
 
-      <div className="relative flex min-h-0 flex-1 flex-col items-center overflow-hidden bg-plane-pane">
+      {/* Padded on the right by whatever an open side-tab panel takes of the
+          card (`SIDE_PANEL_INSET`, set by the side tabs on the content
+          column), so the thread and the composer centre in the room left of
+          the panel and its tab instead of running under them. The strip
+          above stays full width. */}
+      <div
+        data-ai="pane-body"
+        className="relative flex min-h-0 flex-1 flex-col items-center overflow-hidden bg-plane-pane"
+        style={{ paddingRight: `var(${SIDE_PANEL_INSET}, 0px)` }}
+      >
         {ready ? (
           /* keyed and namespaced by the cut: a cut mounts a fresh group, so the
              composer's `layoutId` has no earlier box to travel from */

@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { SIDE_TAB_LABELS, SIDE_TAB_REACH, SideTabs } from "@/components/side-tabs";
+import { AiPane } from "@/components/ai/pane";
+import {
+  SIDE_PANEL_INSET,
+  SIDE_TAB_LABELS,
+  SIDE_TAB_REACH,
+  SideTabs,
+} from "@/components/side-tabs";
 
 /* Instant motion: the tests pin what opens and closes, not the frames between. */
 vi.mock("@/lib/motion-tokens", async (importOriginal) => ({
@@ -92,5 +98,29 @@ describe("SideTabs", () => {
     await waitFor(() => expect(screen.queryByRole("region")).toBeNull());
     expect(screen.getAllByRole("button")).toHaveLength(4);
     expect(tab("References").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("makes room in the pane while a panel is open, and gives it back on close", () => {
+    /* the shell's content column: the pane's card and the stack side by side */
+    const { container } = render(
+      <div data-testid="column">
+        <AiPane />
+        <SideTabs />
+      </div>,
+    );
+    const column = screen.getByTestId("column");
+    const body = container.querySelector('[data-ai="pane-body"]') as HTMLElement;
+    const inset = () => column.style.getPropertyValue(SIDE_PANEL_INSET);
+
+    // the thread, composer and cards lay out inside the inset; the strip does not
+    expect(body.style.paddingRight).toBe(`var(${SIDE_PANEL_INSET}, 0px)`);
+    expect(inset()).toBe("0px");
+
+    fireEvent.click(tab("World Labs"));
+    // the panel (320px here: jsdom has no layout to cap it) plus its riding tab
+    expect(inset()).toBe(`${320 + SIDE_TAB_REACH}px`);
+
+    fireEvent.click(tab("World Labs"));
+    expect(inset()).toBe("0px");
   });
 });

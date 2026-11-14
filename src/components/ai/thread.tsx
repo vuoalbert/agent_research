@@ -122,6 +122,12 @@ const TAKE_OVER = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
  * the glide wanted it and swallow the reader's scroll. Anything else moving it
  * ends the glide without a write; the wheel, touch, key and press listeners are
  * the same rule for input that has not scrolled anything yet.
+ *
+ * A move asked for after the viewport changed width is not glided either: that
+ * is the scroller re-pinning its anchor because the text above it rewrapped (a
+ * side-tab panel opening or closing narrows and widens the column a frame at a
+ * time). Gliding there would chase the column and leave the anchored message
+ * swimming; jumping keeps it where the reader left it.
  */
 function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
   useLayoutEffect(() => {
@@ -138,6 +144,8 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
       target = Number.NaN;
     };
     const native = HTMLElement.prototype.scrollTo;
+    /** the viewport's width at the last move, to tell a reflow from a turn */
+    let width = viewport.clientWidth;
 
     viewport.scrollTo = function scrollTo(
       this: HTMLElement,
@@ -146,9 +154,16 @@ function useGlide(viewportRef: RefObject<HTMLDivElement | null>, on: boolean) {
       const [first, second] = args;
       const top = typeof first === "number" ? second : first?.top;
       const instant = typeof first === "object" && first.behavior === "instant";
+      const reflowed = viewport.clientWidth !== width;
+      width = viewport.clientWidth;
       if (top === undefined || instant) {
         stop();
         Reflect.apply(native, this, args);
+        return;
+      }
+      if (reflowed) {
+        stop();
+        Reflect.apply(native, this, [{ top, behavior: "instant" }]);
         return;
       }
       if (glide && Math.abs(top - target) <= 0.5) return;
